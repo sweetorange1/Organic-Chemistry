@@ -23,15 +23,17 @@ if not exist "%ISS_FILE%" (
   exit /b 1
 )
 
-REM 自动探测 VST3 顶层目录（即包含 "Organic Chemistry.vst3" bundle 的父目录）
+REM 自动探测 VST3 顶层目录（即包含 "Organic Chemistry.vst3" bundle 的父目录）。
+REM 注意：传给 ISCC 用「相对脚本目录的路径」，避免项目路径含空格时
+REM 命令行参数被按空格拆分（相对路径 cmake-build-ninja\... 不含空格）。
 set "VST3_DIR="
 
 if exist "%SCRIPT_DIR%cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
-  set "VST3_DIR=%SCRIPT_DIR%cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3"
+  set "VST3_DIR=cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3"
 )
 
 if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-release\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
-  set "VST3_DIR=%SCRIPT_DIR%cmake-build-release\OrganicChemistry_artefacts\Release\VST3"
+  set "VST3_DIR=cmake-build-release\OrganicChemistry_artefacts\Release\VST3"
 )
 
 if not defined VST3_DIR if exist "%LOCALAPPDATA%\Programs\Common\VST3\Organic Chemistry.vst3" (
@@ -64,12 +66,10 @@ echo [INFO] 编译器: "%ISCC_PATH%"
 echo [INFO] 安装脚本: "%ISS_FILE%"
 echo [INFO] VST3 产物: "%VST3_DIR%"
 
-set "ISCC_EXTRA_FLAGS=-DVST3_DIR=%VST3_DIR%"
-
 echo [INFO] 开始打包 ...
 echo ------------------------------------------------------------
 
-"%ISCC_PATH%" %ISCC_EXTRA_FLAGS% "%ISS_FILE%"
+"%ISCC_PATH%" /DVST3_DIR="%VST3_DIR%" "%ISS_FILE%"
 
 if errorlevel 1 (
   echo ------------------------------------------------------------

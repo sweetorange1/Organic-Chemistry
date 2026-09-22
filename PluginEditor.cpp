@@ -27,6 +27,9 @@ constexpr float kFormulaFontSize = 17.0f;
 constexpr float kDetailFontSize  = 11.5f;
 constexpr float kClearFontSize   = 12.5f;
 
+// Test 面板开关：正式版暂时屏蔽调试面板入口，需要调试参数时改回 true。
+constexpr bool kTestPanelEnabled = false;
+
 constexpr float kResizerSize = 16.0f;
 
 // Preset picker metrics (design size, scaled at runtime).
@@ -227,7 +230,8 @@ void OrganicChemistryAudioProcessorEditor::paint (juce::Graphics& g)
                     (float) bounds.getRight(), (float) bounds.getBottom(), 1.0f * s);
     }
 
-    // Test 按钮（始终显示，点击展开/收起测试面板）。
+    // Test 按钮（正式版暂时屏蔽：kTestPanelEnabled = false）。
+    if (kTestPanelEnabled)
     {
         const auto tb = getTestButtonBounds();
         const auto colour = isTestHovered ? juce::Colour (0xFF2A6FB0)
@@ -515,7 +519,7 @@ juce::Rectangle<int> OrganicChemistryAudioProcessorEditor::getTestButtonBounds()
 
 void OrganicChemistryAudioProcessorEditor::mouseDown (const juce::MouseEvent& event)
 {
-    if (getTestButtonBounds().contains (event.getPosition()))
+    if (kTestPanelEnabled && getTestButtonBounds().contains (event.getPosition()))
     {
         testPanelVisible = ! testPanelVisible;
         testPanel.setVisible (testPanelVisible);
@@ -565,7 +569,7 @@ void OrganicChemistryAudioProcessorEditor::mouseMove (const juce::MouseEvent& ev
     const bool websiteHovered = getWebsiteBounds().contains (event.getPosition());
     const bool clearHovered   = canvas.getMolecule().heavyAtomCount() > 0
                                 && getClearButtonBounds().contains (event.getPosition());
-    const bool testHovered    = getTestButtonBounds().contains (event.getPosition());
+    const bool testHovered    = kTestPanelEnabled && getTestButtonBounds().contains (event.getPosition());
     const bool formulaHovered = getFormulaBounds().contains (event.getPosition());
     const bool prevHovered    = getPrevPresetBounds().contains (event.getPosition());
     const bool nextHovered    = getNextPresetBounds().contains (event.getPosition());

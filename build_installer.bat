@@ -3,12 +3,12 @@ setlocal
 
 REM ============================================================
 REM  Organic Chemistry - Windows Release Installer Builder
-REM  Version : 0.9.0
-REM  Output  : dist\OrganicChemistry_Setup_0.9.0_x64.exe
+REM  Version : 1.0.0
+REM  Output  : dist\OrganicChemistry_Setup_1.0.0_x64.exe
 REM ============================================================
 
 set "APP_NAME=Organic Chemistry"
-set "APP_VERSION=0.9.0"
+set "APP_VERSION=1.0.0"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%organic_chemistry_installer.iss"
 set "DIST_DIR=%SCRIPT_DIR%dist"

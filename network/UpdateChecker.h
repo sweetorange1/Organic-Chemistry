@@ -34,7 +34,7 @@ struct UpdateInfo {
 //
 // 参数：
 //   product          产品标识，如 "organic-chemistry"
-//   current_version  当前软件版本字符串，如 "0.9.0"
+//   current_version  当前软件版本字符串，如 "1.0.0"
 //   platform         平台标识，如 "win-x64" / "mac-arm64"
 //   callback         检查完成后的回调，在主线程执行。
 //

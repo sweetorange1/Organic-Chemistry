@@ -10,7 +10,7 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`Organic Chemistry`（版本 `0.9.0`）
+- **产品名**：`Organic Chemistry`（版本 `1.0.0`）
 - **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **合成器**（Synth / 乐器插件）。用户在界面中"搭建分子"，分子的化学性质实时映射为音色参数——**分子即预设**。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
@@ -21,7 +21,7 @@
 
 ### 1.2 当前阶段与主要功能
 
-**已完成（v0.9.0）**：
+**已完成（v1.0.0）**：
 - 底部元素栏选择 C / O / N / S / P
 - 画布**按下拖拽放置原子**：按下显示虚影（ghost），松手才落子
 - 从一个原子**拖到另一个原子**成键连接（受价键约束，无法连接的不支持）
@@ -1429,7 +1429,7 @@ auto blockParam = [&] (organic::ParamId id)
 
 | 版本 | 内容 |
 | --- | --- |
-| **0.9.0** | **首个对外发布版。** 版本号定版为 0.9.0；新增自动更新检查 + 更新弹窗（`network/` + `ui/UpdateDialog`）、每日匿名遥测（`shared/IisaacTelemetry.h`，此前已接入）；补齐 README.md / LICENSE（GPL-3.0）/ FUNDING.yml / 安装器脚本（Windows Inno Setup + macOS Universal pkg/dmg）；Bell 音色复刻作为起点音色 |
+| **1.0.0** | **第一个正式版本。** 版本号从 0.9.0 升到 1.0.0；暂时屏蔽 Test 调试面板按钮；含自动更新检查 + 更新弹窗、每日匿名遥测、README/LICENSE/FUNDING/安装器脚本，Bell 音色复刻作为起点音色 |
 | 0.1.0 | 纯白界面 + 左上角官网链接 |
 | 0.2.0 | 分子编辑器交互框架：元素栏、画布、左键放原子 / 右键删原子、自动补氢、力导向布局、顶栏分子式 |
 | 0.3.0 | 全英文化；等比缩放；分子增大时 auto-fit；删除后保留最大片段；点击键切换单/双/三键；左下角凝聚式结构式 |

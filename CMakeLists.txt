@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(OrganicChemistry VERSION 0.9.0 LANGUAGES C CXX)
+project(OrganicChemistry VERSION 1.0.0 LANGUAGES C CXX)
 
 # ===== macOS：双架构 Universal Binary（同时输出 Intel x86_64 与 Apple Silicon arm64）=====
 if(APPLE)
@@ -30,7 +30,7 @@ option(ORGANIC_COPY_PLUGIN_AFTER_BUILD "Install plugins after building" ON)
 juce_add_plugin(
         OrganicChemistry
         PRODUCT_NAME "Organic Chemistry"
-        VERSION 0.9.0
+        VERSION 1.0.0
         COMPANY_NAME "iisaacbeats.cn"
         BUNDLE_ID "cn.iisaacbeats.OrganicChemistry"
         PLUGIN_MANUFACTURER_CODE Isac

@@ -28,7 +28,11 @@ REM 注意：传给 ISCC 用「相对脚本目录的路径」，避免项目路�
 REM 命令行参数被按空格拆分（相对路径 cmake-build-ninja\... 不含空格）。
 set "VST3_DIR="
 
-if exist "%SCRIPT_DIR%cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
+if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
+  set "VST3_DIR=cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3"
+)
+
+if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
   set "VST3_DIR=cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3"
 )
 

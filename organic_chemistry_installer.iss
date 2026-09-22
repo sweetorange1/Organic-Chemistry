@@ -6,7 +6,7 @@
 ; VST3 顶层目录（即包含 "Organic Chemistry.vst3" bundle 的父目录）。
 ; 默认指向 Ninja 构建目录；build_installer.bat 会用 -DVST3_DIR 覆盖为实际路径。
 #ifndef VST3_DIR
-  #define VST3_DIR "cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3"
+  #define VST3_DIR "cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3"
 #endif
 
 [Setup]

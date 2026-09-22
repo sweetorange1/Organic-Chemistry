@@ -32,6 +32,20 @@
 
 ---
 
+## 预览 / Preview
+
+<p align="center">
+  <img src="readme_1.png" alt="Organic Chemistry — Naphthalene" width="49%">
+  <img src="readme_2.png" alt="Organic Chemistry — Caffeine" width="49%">
+</p>
+
+<p align="center">
+  <code>左：萘 · 稠环芳香，双环共振 ░ 右：咖啡因 · 四氮杂环，多环稠合</code><br>
+  <em>left: naphthalene, two fused aromatic rings — right: caffeine, a four-nitrogen heterocycle.</em>
+</p>
+
+---
+
 ## 功能模块 / Modules
 
 | 模块 / Module | 功能描述 / Description |

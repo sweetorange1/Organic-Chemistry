@@ -1,0 +1,31 @@
+# 构建产物（CLion 默认 CMake 构建目录）
+cmake-build-*/
+build/
+dist/
+
+# IDE
+.idea/
+.vscode/
+.codebuddy/
+
+# AI 开发辅助 skill（含本地环境路径，不入库）
+aiskill/
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 二进制产物
+*.exe
+*.vst3
+*.component
+*.dylib
+*.app
+*.pkg
+*.dmg
+
+# 临时文件
+*.log
+*.tmp
+build-exit.txt
+_env.txt

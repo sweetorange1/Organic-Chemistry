@@ -241,11 +241,15 @@ void BellVoice::updatePatch()
 
 void BellVoice::updateFilter (float cutoffHz, float sampleRate)
 {
+    // 高音高下 keytrack 会把截止频率推到 Nyquist 以上，TPT 滤波器的
+    // g = tan(π·fc/sr) 会溢出为 Inf/NaN，永久污染滤波器状态（表现为
+    // "电流声后整机静音"）。这里把截止频率钳制在安全范围内。
+    cutoffHz = juce::jlimit (20.0f, sampleRate * 0.45f, cutoffHz);
+
     // filterResonance 0..1 → Q 0.707..8（Vital resonance 语义）。
     const float q = 0.707f + patch.filterResonance * 7.3f;
     lowPass.setCutoffFrequency (cutoffHz);
     lowPass.setResonance (1.0f / juce::jmax (0.1f, q));
-    juce::ignoreUnused (sampleRate);
 }
 
 float BellVoice::renderOscillator (int index, double sampleRate, double pitchRatio)
@@ -433,7 +437,16 @@ void BellVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
         updateFilter (cutoffHz, (float) sr);
         const float filteredOut = lowPass.processSample (0, filtered);
 
-        const float out = (direct + filteredOut) * env * 0.5f;
+        const float rawOut = (direct + filteredOut) * env * 0.5f;
+
+        // 兜底：一旦出现非有限值（滤波系数在极端音高下溢出），立即
+        // 重置滤波器状态并输出静音，避免 NaN 永久污染导致整机失效。
+        const float out = std::isfinite (rawOut) ? rawOut : 0.0f;
+        if (! std::isfinite (rawOut))
+        {
+            lowPass.reset();
+            noiseBandpass.reset();
+        }
 
         if (numChannels > 1)
         {

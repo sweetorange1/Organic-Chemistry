@@ -82,7 +82,7 @@ if [[ ! -f "$CMAKE_FILE" ]]; then
   echo "[ERROR] 未找到 CMakeLists.txt: $CMAKE_FILE"
   exit 1
 fi
-# 匹配形如：project(OrganicChemistry VERSION 1.0.0 LANGUAGES C CXX)
+# 匹配形如：project(OrganicChemistry VERSION 1.0.1 LANGUAGES C CXX)
 RAW_VER="$(grep -Eo 'project\([^)]*VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' "$CMAKE_FILE" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
 if [[ -z "$RAW_VER" ]]; then
   echo "[ERROR] 无法从 CMakeLists.txt 提取版本号（project(VERSION ...) 未匹配到 X.Y.Z 格式）"

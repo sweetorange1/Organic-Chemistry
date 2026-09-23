@@ -11,7 +11,7 @@
 
 ### 1.1 项目定位
 - **产品名**：`Organic Chemistry`（版本 `1.0.1`）
-- **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **合成器**（Synth / 乐器插件）。用户在界面中"搭建分子"，分子的化学性质实时映射为音色参数——**分子即预设**。
+- **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。核心是一个复刻 Vital「BELL Reflections」预设的三正弦钟声引擎；用户在界面中"搭建分子"，分子的规范 SMILES 经确定性哈希映射到 Bell 引擎的 33 个参数——**分子即预设**。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
   - **Windows**：`VST3` + `Standalone`
@@ -41,17 +41,19 @@
 - **sp³ 键角按元素取实验值**：C/N/O/S/P 各不相同（C–S–C 只有 99°，画出来明显比碳链尖），
   不再是一刀切的 109.5°（见 §7.5.3b）
 - **环几何**：环内键角取多边形内角 + 环模板力，环己烷 / 苯稳定为正六边形，稠环（萘）按共享边镜像展开（见 §7.5.6b）
-- **现代化合成器（v0.13 重构）**：8 复音 wavetable → **每 voice** 形态滤波器（**key trk / vel trk / drive**）
-  → 梳状共振体 → 元音共振峰 → 失真 → 合唱 → 混响 → 延迟（见 §9.1）
-- **完整调制系统**：幅度 ADSR + **调制包络 ENV2**（→ 滤波 / 音高 / warp）、**全局 LFO1**（四种波形 +
-  淡入 → 滤波 / 音高 / 幅度 / 声像）、**每 voice LFO2**、**每音随机源**、**慢漂移**、噪声层、glide
-- **分子 → 声音映射层**：21 个化学描述符 → **70** 个合成参数，每条映射都有化学依据（**完整对照表见 §1.5**）
-- **Test 面板**：70 个参数按 14 个处理阶段分类展示，可手动覆盖 / 一键回归自动
+- **Bell 音色引擎**：三正弦振荡器复刻 Vital「BELL Reflections」预设（OSC1 基频 / OSC2 +12 八度 + squeeze 相位失真 / OSC3 +12 八度），
+  → 低通滤波（keytrack + ENV2）→ 多段压缩 → 合唱 → 延迟 → 混响 → 降采样 → 软削波（见 §9）
+- **钟形包络**：快起音 + 指数衰减 + 长释放，配 ENV2 调制包络（推动滤波截止）
+- **分子 → Bell 参数映射**：分子 SMILES 经确定性哈希映射到 **33** 个 Bell 参数 + 4 个宏（WET / BITCRUSH / DETUNE / ATTACK），
+  非单调、确定但不可预测（**完整对照见 §1.5**）
+- **EnvelopePanel 包络编辑器**：图形化 ADSR（A/D/R 水平拖、S 垂直拖），可手动锁定单个段，`Reset` 交还分子
+- **波形预览**：右上角实时显示 osc_1 的分子波表（近正弦 + 少量 SMILES 哈希决定的谐波）
+- **Test 面板（v1.0.0 起屏蔽）**：33 个 Bell 参数按分类展示，`kTestPanelEnabled = false` 暂时隐藏
 - **自动更新检查 + 更新弹窗**：启动后延迟 5s 异步请求 `iisaacbeats.cn/api/update/check`（5s 超时、失败静默），仅有新版本时弹原生更新窗（`network/` + `ui/UpdateDialog`）
 - **每日匿名遥测**：`shared/IisaacTelemetry.h`，每日一次 `ui_open` 事件（无音频数据、无 PII），`IISAAC_TELEMETRY_DISABLED=1` 可关闭
 
 **尚未实现（明确推迟）**：
-- 参数自动化（`AudioProcessorValueTreeState`）、音色预设管理（分子预设已有，音色预设尚无）、图形化 ADSR 编辑器。
+- 参数自动化（`AudioProcessorValueTreeState`）、Bell 音色预设管理（分子预设已有，音色预设尚无）。
 
 ### 1.3 技术栈
 
@@ -80,256 +82,103 @@
 
 ---
 
-### 1.5 化学 → 合成器映射总表（调试速查）⭐⭐
+### 1.5 分子 → Bell 音色映射（调试速查）⭐⭐
 
-> **这一节是调音的唯一入口。** 想改某个化学性质对应的听感，先在这里定位，再去
-> `MoleculeAudioMapper.cpp::mapMoleculeToAudio()` 改那一行。全部 70 个参数在此列全。
-> DSP 实现见 §9，化学描述符的定义与文献出处见 §7.7。
+> **这一节是调音的唯一入口。** 想改某个分子对应的听感，先去 `BellEngine.cpp::mapMoleculeToBellParams()`
+> 改那一行。全部 33 个 Bell 参数 + 4 个宏在此列全。DSP 实现见 §9，化学描述符见 §7.7。
 
 #### 1.5.1 数据流
 
 ```
 Molecule（画布拓扑）
    │
-   ├─ computeDescriptors()  ──► ChemicalDescriptors（21 项化学量）
-   │                                    │
-   │                                    ├─► mapMoleculeToAudio()  ──► 70 个合成参数
-   │                                    │                                （本节表格）
-   └─ canonicalSmiles()  ──────────────►└─► buildWaveTable()      ──► 单周期波形
-                                                                        （见 §9.3.1）
+   ├─ canonicalSmiles()  ──────────────► buildNearSineWave()  ──► osc_1 波表（近正弦）
+   │                                                              （SMILES 哈希决定谐波）
+   ├─ canonicalSmiles()  ──────────────► mapMoleculeToBellParams() ──► 33 个 Bell 参数
+   │                                                                  （本节表格）
+   └─ canonicalSmiles()  ──► hashSmiles() ──► setNoiseSampleIndex() ──► 击打采样
 ```
 
-参数分两类：**自动**（跟随分子）与**手动**（Test 面板拖过就锁定）。手动参数不再被映射覆盖，
-点 `Reset to auto` 全部交还给分子。
+**核心设计**：分子不再是"化学性质 → 合成参数"的单调映射，而是把规范 SMILES 喂给一个
+**确定性哈希 + xorshift32 伪随机源**，得到一串稳定但不可预测的值，落在「冬季钟声/键盘」
+好音色的共性范围内：
 
-#### 1.5.0 ⚠️ 当前接线状态（v0.14 起）
+- **确定**：同一分子永远得到同一音色（可复现）。
+- **不可预测**：加/删一个原子会让音色**无规律地**改变，而不是单调地"更亮/更响"——
+  这是刻意为之，让分子像"随机种子"而非"旋钮"。
 
-**v0.13 一次性把 70 个参数全部接上分子，实测音色变差**（调制源互相打架、音头被多重压缩）。
-v0.14 起改为**渐进接线**：映射退回 v0.12 的 37 条，v0.13 新增的 33 个参数全部旁通，
-DSP 保留、等手动试听逐个定幅度后再接。
+#### 1.5.2 手动锁定
 
-判据写在 `ParamDef::mapped` 里，**面板与映射层共用这一份事实**，不会各自漂移：
+映射只覆盖 EnvelopePanel 的四个包络段，用户拖过某段即标记为「手动」，分子变化不再覆盖它；
+`Reset` 交还分子驱动。其余 Bell 参数（振荡器 / 滤波 / 效果器）当前完全跟随分子。
 
-| 状态 | 数量 | Test 面板显示 | 说明 |
-| --- | --- | --- | --- |
-| 已映射 | **37** | 深灰标签 | 分子实时驱动，就是 v0.12 那套 |
-| 待接线 | **33** | 浅灰标签 + `[free]` 后缀 | 分子不管，滑杆归你 |
-| 手动锁定 | 任意 | 蓝色标签 | 拖过就锁，`Reset to auto` 交还 |
+#### 1.5.3 声源（三个正弦振荡器）
 
-**旁通值必须是该 DSP 环节的「中性值」，不是 0** —— 这是本轮的核心教训：
-
-| 参数 | 旁通值 | 为什么不是 0 |
+| 参数 | 映射 | 说明 |
 | --- | --- | --- |
-| `Velocity sens` | **1.0** | 0 = "完全忽略力度，每个音满音量"，是旁通的**反面**。v0.12 等价于 1.0 |
-| `Env curve` | **0** | >0 会把包络求幂（`env^(1+2.5c)`），**无条件**压低音量、加快衰减 |
-| `Filter key trk` | **0** | 见下方等价性说明 |
-| `Filter vel trk` | **0** | 同上 |
-| `Filter drive` | 0 | 非零会在滤波器前引入 tanh，破坏线性 |
-| `LFO1 shape` | 0 | 0 = 正弦，v0.12 唯一波形 |
-| `LFO1 fade` | 0 s | 0 = 立即全深度 |
-| `Glide` | 0 s | 0 = 音高瞬间跳变 |
-| 各 `-> xxx` 深度 | 0 | ENV2 / LFO2 / Organic 的调制去向 |
-| `Comb mix` / `Formant mix` | 0 | 湿声为 0，整段跳过 |
+| OSC1 level | `0.65 + hash·0.2` | 基频层音量（0.65–0.85） |
+| OSC1 pitch | 40% 概率 +12 | 基频八度（0 或 +12） |
+| OSC2 pitch | 40% 概率 +24 | 高八度铃音层（+12 或 +24） |
+| OSC2 squeeze | `hash` | 相位失真量 0–1（金属感） |
+| OSC2 unison | `1 + floor(hash·7)` | 齐奏声部数 1–7（厚度） |
+| OSC3 level | `hash·0.35` | 最亮高层音量（0–0.35） |
+| OSC3 pitch | 50% 概率 +24 | 高层八度（+12 或 +24） |
 
-**关于 per-voice 滤波器的等价性**（v0.13 曾误判为音色变差的元凶）：
+#### 1.5.4 包络（钟形）与滤波
 
-SVF 是**线性**系统，`filter drive = 0` 时整条路径无非线性。只要 `key trk = vel trk = 0`
-且 ENV2/LFO2/随机/漂移深度均为 0，**所有 voice 共享同一截止频率**，此时
-
-> Σ filter(voiceᵢ) ≡ filter(Σ voiceᵢ)
-
-即「逐 voice 滤波再求和」与 v0.12 的「求和后用单个全局滤波器」**数学上完全等价**。
-所以 v0.13 把滤波器下沉到 voice 这个架构改动**不必回退**——它是实现 `key trk` 的前提，
-而 `key trk = 0` 时又能精确退化成旧行为。真正改音色的是上表那几个默认值。
-
-唯一保留的行为差异：`Filter env amt` 的驱动源从 v0.12 的**包络跟随器**（5 ms / 120 ms，
-作用于混合后的信号）换成了 **per-voice ADSR**。后者更干净、无跨音符串扰。映射系数
-特意写成 `rotN * 2.1`，对齐 v0.12 的 `envAmt(0..1) × 2.5 oct` 在 `rotN` 满值时的
-2.125 oct 扫动幅度，因此听感幅度一致。
-
-> 下方 1.5.2 起的逐参数表中，**标注为待接线的行描述的是设计意图，不是当前行为**。
-> 它们的公式已作为注释保留在 `mapMoleculeToAudio()` 对应位置，接线时直接启用。
-
-#### 1.5.2 中间归一量（先看这个，所有公式都建立在它上面）
-
-映射不直接用原始描述符，而是先压到 0..1。**天花板定得低**，让三五个原子就逼近满值，
-这样小分子之间的差异也听得出来。
-
-| 归一量 | 来源描述符 | 天花板 | 含义 |
-| --- | --- | --- | --- |
-| `sizeN` | heavyAtomCount | 10 | 分子大小 |
-| `heteroN` | heteroAtomCount | 5 | 杂原子（O/N/S/P）多寡 |
-| `unsatN` | degreeOfUnsaturation | 5 | 不饱和度（环 + π 键） |
-| `chainN` | longestChainLength | 8 | 最长链 |
-| `ringN` | ringCount | 3 | 环数 |
-| `branchN` | branchCount | 4 | 分支点数 |
-| `aromaticN` | aromaticRingCount | 2 | 芳香环数（Hückel 4n+2） |
-| `ringSizeN` | maxRingSize | 7 | 最大环尺寸 |
-| `rotN` | rotatableBondCount | 6 | 可旋转键 = 构象自由度 |
-| `donorN` | hBondDonorCount | 4 | 氢键供体（O–H / N–H） |
-| `acceptorN` | hBondAcceptorCount | 4 | 氢键受体（N / O） |
-| `wienerN` | wienerIndex | 220 | 骨架铺展程度 |
-| `randicN` | randicIndex | 6 | 分支连接性 |
-| `polarityN` | bondPolarity | 12 | 键极性总量 |
-| `massN` | molecularWeight | 220 | 分子量（惯性） |
-| `tpsaN` | tpsa | 140 Å² | 拓扑极性表面积 |
-| `logPN` | clogP | (x+3)/9 | 亲脂性（−3..+6 → 0..1） |
-| `sp3N` | fractionSp3 | 已是 0..1 | sp³ 碳占比 |
-| `strainN` | maxRingSize | `(6−n)/3` | **环张力**：三元环 1.0，六元及以上 0 |
-
-#### 1.5.3 振荡器 OSCILLATOR
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Osc level | `sizeN` | `0.30 + sizeN·0.35` | 0.30–0.65 | 分子越大声音越厚 |
-| Osc detune | `branchN` | `0.01 + branchN·0.12` | 0.01–0.13 | 支链 = 不规整 → 失谐加宽 |
-| Osc spread | `randicN` | `0.10 + randicN·0.85` | 0.10–0.95 | 骨架越分散，声场越开 |
-| Sub level | `ringSizeN` | `ringSizeN·0.55` | 0–0.55 | 大环 = 低频共振腔 → 补低八度 |
-| Wave warp | `1−sp3N` | `(1−sp3N)·0.75` | 0–0.75 | 越共轭平面，波形越"扭" |
-| **Noise level** | `heteroN` | `heteroN·0.32` | 0–0.32 | 杂原子 = 骨架里的杂质 → 噪声成分 |
-| **Noise colour** | `polarityN` | `0.15 + polarityN·0.80` | 0.15–0.95 | 极性越强噪声越亮越尖 |
-| **Glide (s)** | `massN` | `massN·0.18` | 0–0.18 | 惯性：重分子换音滑得慢 |
-
-#### 1.5.4 幅度包络 AMP ENVELOPE
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Attack | `massN` | `0.002 + massN·0.060` | 2–62 ms | 重分子起音慢（惯性） |
-| Decay | `acceptorN` | `0.05 + acceptorN·0.95` | 0.05–1.0 s | 氢键受体 = 分子间作用强 → 衰减缓 |
-| Sustain | `donorN` | `0.35 + donorN·0.60` | 0.35–0.95 | 供体让分子"粘住"彼此（水、醇的高沸点） |
-| Release | `chainN` | `0.08 + chainN·0.90` | 0.08–0.98 s | 链越长尾巴越长 |
-| **Env curve** | `sp3N` | `0.15 + sp3N·0.75` | 0.15–0.90 | sp³ = 柔软有机 → 指数衰减；共轭平面 → 线性、更电子 |
-| **Velocity sens** | `1−massN` | `0.15 + (1−massN)·0.75` | 0.15–0.90 | **F = ma**：轻分子对力度更敏感 |
-
-#### 1.5.5 滤波器 FILTER（每 voice 一个）
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Low-cut | `heteroN` | `30 + heteroN·1170` | 30–1200 Hz | 杂原子越多低频切得越狠 → 薄而亮 |
-| Low-cut res | `ringN` | `0.707 + ringN·0.30` | 0.707–1.0 | 环给低切一点峰 |
-| High-cut | `unsatN` | `2000 + unsatN·9000` | 2–11 kHz | 不饱和 → 更亮 |
-| High-cut res | `aromaticN` | `0.707 + aromaticN·0.80` | 0.707–1.5 | 芳香共振稳定 → 高频有峰 |
-| Filter type | `tpsaN` | `tpsaN·3` | LP→BP→HP→Notch | 非极性烃 = 温暖低通；极性越强越"中空" |
-| Filter freq | `logPN` | `13000 − logPN·11500` | 1.5–13 kHz | 亲脂（油性）分子听感暗，亲水分子亮 |
-| Filter res | `aromaticN` | `0.70 + aromaticN·4.5` | 0.7–5.2 | 芳香环电流的"鸣响" |
-| Filter env amt | `rotN` | `rotN·2.6`（倍频程） | 0–2.6 oct | 构象自由度 → 音头把滤波器推开 |
-| **Filter key trk** | `ringN` | `0.15 + ringN·0.80` | 0.15–0.95 | 环状刚性分子音色全键盘一致；柔性长链高音更闷 |
-| **Filter vel trk** | `polarityN` | `polarityN·0.85` | 0–0.85 | 极性键对外场（力度）响应最强 |
-| **Filter drive** | `unsatN` | `unsatN·0.55` | 0–0.55 | π 电子密度高 → 容易被推过头 |
-
-#### 1.5.6 调制包络 ENV 2
-
-> 与幅度包络完全独立，专管**音头的形态变化**。这是现代合成器区别于早期减法合成的关键：
-> 声音在起音的几百毫秒里会变形，而不是从头到尾一个静态频谱。
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| ENV2 attack | `massN` | `0.003 + massN·0.10` | 3–110 ms | 同惯性逻辑 |
-| ENV2 decay | `wienerN` | `0.08 + wienerN·1.30` | 0.08–1.4 s | 骨架越铺展，演化越长 |
-| ENV2 sustain | `donorN` | `donorN·0.65` | 0–0.65 | 供体维持住形变 |
-| ENV2 release | `chainN` | `0.10 + chainN·1.40` | 0.1–1.5 s | 长链回落慢 |
-| **ENV2 → filter** | `unsatN` | `(unsatN − 0.40)·3.2` | **−1.3 – +1.9 oct** | **双向**：不饱和分子音头把滤波器推开（亮"咬"），高度饱和的反向——音头闷，之后才打开（木质感） |
-| **ENV2 → pitch** | `strainN` | `strainN·7` | 0–7 半音 | **环张力 → 音头音高弯折**。环丙烷储存约 115 kJ/mol 张力能，释放时"绷"一下 |
-| **ENV2 → warp** | `aromaticN` | `aromaticN·0.55` | 0–0.55 | π 电子离域让波形在音头重排 |
-
-#### 1.5.7 LFO 1（全局）
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| LFO1 rate | `rotN` | `0.08 + rotN·3.4` | 0.08–3.5 Hz | 可旋转键 = 构象翻转频率 |
-| **LFO1 shape** | `branchN` | `branchN·3` | 正弦→三角→方波→阶梯 | 直链翻转平滑，支链越多跳变越离散 |
-| **LFO1 fade** | `massN` | `massN·2.2` | 0–2.2 s | 重分子起振慢 → 颤音延迟进入（真实演奏者也是先出音再揉弦） |
-| LFO1 → filter | `rotN` | `rotN·0.70` | 0–0.70 | 构象运动扫动音色 |
-| **LFO1 → pitch** | `(1−ringN)·rotN` | `×40` | 0–40 音分 | 刚性环不抖，柔性链才有音高晃动 |
-| LFO1 → amp | `polarityN` | `polarityN·0.45` | 0–0.45 | 偶极子在电场中摆动 |
-| LFO1 → pan | `polarityN` | `polarityN·0.60` | 0–0.60 | 同上，空间维度 |
-
-#### 1.5.8 LFO 2（每 voice）
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| **LFO2 rate** | `1−massN` | `0.60 + (1−massN)·8.0` | 0.6–8.6 Hz | **简谐振子 ω ∝ √(k/m)**：分子越重本征振动越慢（有物理依据） |
-| **LFO2 shape** | `ringSizeN` | `ringSizeN·3` | 同上四档 | 大环给更"阶梯"的调制 |
-| **LFO2 → warp** | `unsatN` | `unsatN·0.45` | 0–0.45 | 不饱和体系波形持续变形 |
-| **LFO2 → filter** | `aromaticN` | `aromaticN·0.40` | 0–0.40 | 芳香环电流是周期性的 |
-
-#### 1.5.9 ORGANIC（每音随机 / 慢漂移）⭐
-
-> 这一组不对应任何"效果"，它决定声音有多**活**。化学依据是**构象异构**：一个有 n 个可
-> 旋转键的分子约有 3ⁿ 个能量相近的构象，室温下不断互相转换，所以它每一次"存在"的
-> 具体形状都不同。刚性环分子没有这个自由度，每次都长一个样——听感上也就应该更机械。
->
-> 这是"有机感"最核心的一组参数：**没有两个音是完全一样的**。
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Rand pitch | `rotN` | `rotN·22` | 0–22 音分 | 每次 note on 随机微失谐 |
-| Rand filter | `rotN` | `rotN·0.85` | 0–0.85 oct | 每音亮度不同 |
-| Rand pan | `branchN` | `branchN·0.65` | 0–0.65 | 支链空间取向不定 → 每音落点不同 |
-| Drift rate | `1−massN` | `0.04 + (1−massN)·0.55` | 0.04–0.6 Hz | **Graham 扩散定律**：速率 ∝ 1/√M |
-| Drift depth | `1−ringN` | `(1−ringN)·0.55` | 0–0.55 | 刚性环不漂移，柔性链缓慢游移 |
-
-> 实现细节：每个 voice 的漂移相位与速率各带 ±25% 抖动，**多音齐奏时各声部各自游移**，
-> 而不是整体同步摆动（同步摆动听起来仍然是机器）。
-
-#### 1.5.10 RESONATOR（跟随音高的梳状共振体）
-
-> 环 = 腔体。Karplus-Strong 家族的最简形式，给声音一个"共鸣箱 / 被激励的弦"的物理体感。
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Comb mix | `ringSizeN` | `ringSizeN·0.55` | 0–0.55 | 环越大共鸣越明显 |
-| **Comb tune** | `maxRingSize` | `maxRingSize / 4` | 0.25–4× | **环尺寸直接决定音程**：六元环 = 主音上方纯五度，三元环 = 低八度附近的闷响 |
-| Comb feedback | `aromaticN` | `0.25 + aromaticN·0.65` | 0.25–0.90 | 芳香 = 共振稳定 = 长时间鸣响 |
-| Comb damp | `sp3N` | `0.15 + sp3N·0.75` | 0.15–0.90 | sp³ 骨架"软"，高频损耗快（木头 vs 金属） |
-
-#### 1.5.11 FORMANT（元音腔体）
-
-> 共振峰是**生物发声腔体**的特征。把输出送进这组滤波器，声音立刻从"电子"变成
-> "会说话的东西"——电子音乐里获得生命感最有效的手段之一。
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Formant morph | `heteroN` | `heteroN·4` | A→E→I→O→U | 杂原子数量决定元音 |
-| Formant mix | `donorN` | `donorN·0.50` | 0–0.50 | 氢键供体（O–H、N–H）是生物分子的标志：水、醇、糖、氨基酸全靠它们组织起来 |
-
-#### 1.5.12 效果链 DISTORTION / CHORUS / REVERB / DELAY / MASTER
-
-| 参数 | 驱动量 | 公式 | 范围 | 听感 |
-| --- | --- | --- | --- | --- |
-| Drive | `unsatN` | `unsatN·0.70` | 0–0.70 | 不饱和 → 更脏 |
-| Dist mix | `unsatN` | `unsatN·0.50` | 0–0.50 | 同上 |
-| Dist type | `1−sp3N` | `floor((1−sp3N)·3.99)` | tanh / 硬削 / 折叠 / 降位 | 越不饱和曲线越粗暴 |
-| Chorus rate | `ringN` | `0.30 + ringN·1.20` | 0.3–1.5 Hz | — |
-| Chorus depth | `branchN` | `0.001 + branchN·0.005` | 1–6 ms | — |
-| Chorus mix | `heteroN` | `0.05 + heteroN·0.25` | 0.05–0.30 | — |
-| Reverb room | `sizeN` | `0.08 + sizeN·0.90` | 0.08–0.98 | 分子越大空间越大 |
-| Reverb damping | `unsatN` | `0.95 − unsatN·0.90` | 0.05–0.95 | 不饱和 → 尾巴更亮 |
-| Reverb wet | `wienerN` | `0.05 + wienerN·0.70` | 0.05–0.75 | 骨架铺展 → 湿声多 |
-| Reverb width | `randicN` | `0.35 + randicN·0.60` | 0.35–0.95 | — |
-| Delay time | `chainN` | `0.04 + chainN·1.16` | 0.04–1.2 s | 链越长回声间隔越长 |
-| Delay feedback | `ringN` | `0.05 + ringN·0.80` | 0.05–0.85 | 环 = 循环 → 回声重复多 |
-| Delay mix | `branchN` | `0.05 + branchN·0.60` | 0.05–0.65 | — |
-| Delay ping-pong | `aromaticN` | `aromaticN·0.95` | 0–0.95 | **芳香环电流**（NMR ring current 是真实现象）→ 左右交替的回声 |
-| Stereo width | `sizeN` | `0.70 + sizeN·0.30` | 0.70–1.0 | — |
-| Master level | — | 不被映射 | 0.90 | 波形已归一化 |
-
-#### 1.5.13 想听某个变化，该改什么分子
-
-| 我想听… | 就这么改分子 | 背后走的映射 |
+| 参数 | 映射 | 说明 |
 | --- | --- | --- |
-| **音色本质改变** | 加双键 / 三键 / 环 | 不饱和度 → 波形谐波衰减指数（最夸张的一档） |
-| 声音变大变厚 | 多加重原子 | `sizeN` → osc level / 混响房间 / 宽度 |
-| 变亮变薄 | 加 O / N 杂原子 | `heteroN` → 低切升高 + 噪声层 |
-| 变暗变油 | 加长烷基链（不加杂原子） | `logPN` ↑ → 滤波频率下降 |
-| **变"会说话"** | 加 –OH / –NH₂ | `donorN` → 共振峰混合量 |
-| **变"活"、每音不同** | 加长柔性链（可旋转键多） | `rotN` → 每音随机 + LFO 速率 |
-| **变机械、每音一致** | 搭成环 | `ringN` ↑ → 漂移与随机归零，键跟踪拉满 |
-| 音头有个"绷"的弯音 | 搭三元 / 四元环 | `strainN` → ENV2 → pitch |
-| 出现共鸣腔体感 | 搭大环 | `ringSizeN` → comb mix / tune |
-| 回声左右跳 | 搭苯环等芳香环 | `aromaticN` → 乒乓延迟 |
-| 音头更"咬" | 提高不饱和度 | ENV2 → filter 走正向 |
-| 音头闷、之后打开 | 全饱和（如环己烷、烷烃） | ENV2 → filter 走负向 |
+| Attack | `0.0005 + hash·0.015` | 0.5–15 ms 快起音（敲击感） |
+| Decay | `0.8 + hash·2.5` | 0.8–3.3 s 指数衰减到 0 |
+| Sustain | 固定 0 | 钟声无平台 |
+| Release | `0.6 + hash·2.0` | 0.6–2.6 s 长余音 |
+| ENV2 → filter | `hash` | 音头把滤波截止推开 0–1 |
+| Filter cutoff | `400 + hash·4000` | 400–4400 Hz 低通（osc_2 路由经过） |
+| Filter resonance | `hash·0.3` | Q 0.707–约 2.9 |
+| Filter keytrack | 固定 1.0 | 截止频率跟随音高（E9 溢出已修复，见 §12） |
+
+#### 1.5.5 噪声击打层
+
+| 参数 | 映射 | 说明 |
+| --- | --- | --- |
+| Noise level | 70% 概率 `0.3 + hash·0.5`，否则 0 | 金属击打瞬态（noise 采样库） |
+| Noise cutoff | `1000 + hash·1000` | 击打采样带通中心 1000–2000 Hz |
+
+#### 1.5.6 空间效果与失真
+
+| 参数 | 映射 | 说明 |
+| --- | --- | --- |
+| Chorus mix | `0.05 + hash·0.25` | 4 声部调制延迟干湿比 |
+| Chorus feedback | `0.35 + hash·0.15` | 0.35–0.50 |
+| Delay mix | `0.15 + hash·0.3` | 乒乓延迟干湿比 |
+| Delay feedback | `0.2 + hash·0.3` | 0.2–0.5 |
+| Delay time | `0.3 + hash·0.5` | 0.3–0.8 s 回声间隔 |
+| Reverb mix | `0.2 + hash·0.4` | 空间湿声 |
+| Reverb decay | `0.4 + hash·1.0` | 混响衰减 |
+| Reverb size | `0.3 + hash·0.3` | 房间大小 |
+| Distortion drive | `hash·0.5` | 降采样失真深度 |
+| Distortion mix | `hash·0.3` | 失真干湿比 |
+
+#### 1.5.7 四个宏
+
+| 宏 | 默认 | 作用 |
+| --- | --- | --- |
+| WET | 0.5 | 效果链湿声总量（bipolar，正负都影响合唱/延迟/混响） |
+| BITCRUSH | 0.0 | 降采样失真深度 |
+| DETUNE | 0.2 | 慢速音高漂移深度（±22.5 音分） |
+| ATTACK | 哈希 | osc_2 电平（铃音层起音强度） |
+
+#### 1.5.8 想听某个变化，该改什么分子
+
+分子编辑**不再有**「加双键 → 更亮」这类单调直觉：改任意结构都会让整个音色**无规律地换一个**
+（SMILES 哈希重排所有参数）。唯一确定的行为：
+
+| 操作 | 结果 |
+| --- | --- |
+| 画布留空 | 静音（`setMoleculeEmpty(true)`） |
+| 放任意重原子 | 立即出声，音色由该分子的 SMILES 哈希决定 |
+| 改动任意原子/键 | 整个音色换一个（不可预测，但同分子可复现） |
+| EnvelopePanel 手动拖过某段 | 该段锁定，分子变化不再覆盖 |
 
 ---
 
@@ -341,19 +190,27 @@ I:\Organic Chemistry\
 ├── README.md                   项目 README（双语）
 ├── LICENSE                     GNU GPL v3.0
 ├── PROJECT_OVERVIEW.md         本文档
-├── PluginProcessor.h/.cpp      音频处理（wavetable 合成器 + 效果链）
+├── PluginProcessor.h/.cpp      音频处理器：Bell 效果链 + 采样库 + 状态持久化
 ├── PluginEditor.h/.cpp         顶层编辑器：布局 / 信息栏 / 缩放 / 动画时钟
+├── BellEngine.h/.cpp           【Bell 引擎】三正弦振荡器 voice + 分子→Bell 参数映射
+├── BellWave.h                  osc_1 默认波表常量
+├── EnvelopePanel.h/.cpp        ADSR 图形编辑器（手动锁定单个段）
 ├── MoleculeModel.h/.cpp        【化学核心】分子数据结构 + 成键规则 + 布局求解
 ├── MoleculeCanvas.h/.cpp       画布：坐标变换 / 命中测试 / 绘制 / 交互
 ├── ElementBar.h/.cpp           底部元素选择栏
+├── MoleculeAudioMapper.h/.cpp  （历史）类型定义 + kWaveTableSize + kOsc1Wave
+├── TestPanel.h/.cpp            33 个 Bell 参数调试面板（表驱动，v1.0.0 起屏蔽）
+├── PresetMenu.h/.cpp           自绘分子预设面板（3 列卡片）
+├── AudioTests.cpp / BellTests.cpp   离线回归测试
 ├── network/                    SemVer 版本解析 + 异步更新检查
 ├── ui/                         更新弹窗（白底医疗风）
 ├── shared/IisaacTelemetry.h    header-only 每日匿名遥测
+├── noise/                      噪声击打采样库（120 个 wav/aif）
 ├── build_installer.bat         Windows 安装器打包（Inno Setup）
 ├── build_installer_mac.sh      macOS 安装器打包（Universal pkg/dmg）
 ├── organic_chemistry_installer.iss   Inno Setup 安装脚本
-├── cmake-build-ninja/          Ninja 构建目录（当前使用）
-└── cmake-build-release-visual-studio/   旧 VS 构建目录（含可复用的 _deps/juce-src）
+├── cmake-build-ninja/          Ninja 构建目录
+└── cmake-build-release-visual-studio/   VS 构建目录
 ```
 
 ### 2.1 分层架构
@@ -362,23 +219,29 @@ I:\Organic Chemistry\
 ┌──────────────────────────────────────────────────────────────┐
 │  Plugin 层                                                     │
 │    OrganicChemistryAudioProcessor  (PluginProcessor.h/cpp)    │
-│      · wavetable 声源（子振荡/warp/ADSR/spread）                │
-│      · 效果链：低切→高切→形态滤波→失真→合唱→混响→延迟           │
-│      · MorphFilter (TPT SVF) / 全局 LFO / 包络跟随 / 参数平滑    │
+│      · processBlock → processBellBlock（Bell 模式）            │
+│      · 效果链：多段压缩 → 合唱 → 延迟 → 混响 → 降采样 → 软削波   │
+│      · 噪声击打采样库 + 分子状态持久化                          │
 │    OrganicChemistryAudioProcessorEditor (PluginEditor.h/cpp)  │
 │      · 唯一的 Timer（60Hz）→ 驱动所有子组件动画                  │
 │      · ComponentBoundsConstrainer 锁定宽高比 → 等比缩放          │
-│      · uiScale() 作为全局缩放因子下发给子组件                    │
+│      · applyMoleculeToAudio：分子 → Bell 参数 + osc_1 波表      │
+├──────────────────────────────────────────────────────────────┤
+│  音频引擎层（BellVoice，BellEngine.h/cpp）                      │
+│    · 三正弦振荡器（OSC1/2/3）+ squeeze 相位失真                 │
+│    · 钟形包络（ADSR + ENV2）+ 低通滤波（keytrack + ENV2）       │
+│    · 噪声击打采样（bandpass）                                  │
 ├──────────────────────────────────────────────────────────────┤
 │  UI 组件层                                                     │
 │    MoleculeCanvas  —— 分子画布（模型空间 ↔ 屏幕空间变换）        │
 │    ElementBar      —— C/O/N/S/P 圆形色标                       │
-│    TestPanel       —— 70 个参数的调试面板（表驱动，自动分类）     │
+│    EnvelopePanel   —— ADSR 图形编辑器（手动锁定段）             │
 │    PresetMenu      —— 自绘预设面板（全屏遮罩 + 3 列卡片）         │
-│    TestPanel       —— 37 参数调试面板（表驱动，自动同步）        │
+│    TestPanel       —— 33 个 Bell 参数调试面板（已屏蔽）          │
 ├──────────────────────────────────────────────────────────────┤
 │  映射层（纯函数，无状态）                                        │
-│    MoleculeAudioMapper —— 描述符 → 37 参数 + SMILES → wavetable │
+│    BellEngine.cpp  —— mapMoleculeToBellParams（SMILES→33 参数） │
+│                    —— buildNearSineWave（SMILES→osc_1 波表）    │
 ├──────────────────────────────────────────────────────────────┤
 │  Model 层（无 JUCE UI 依赖，纯数据 + 算法）                      │
 │    organic::Molecule  —— 拓扑、价键、补氢、VSEPR 力场、描述符     │
@@ -590,9 +453,11 @@ void PluginEditor::timerCallback() {
 
 `slots` 数组持有每个元素的 `bounds` + `selectAnim` + `hoverAnim`。选中通过 `onElementChosen` 回调通知外部。
 
-### 6.4 `organic::MoleculeAudioMapper`（MoleculeAudioMapper.h/.cpp）
+### 6.4 `organic::BellEngine`（BellEngine.h/.cpp）
 
-纯函数式映射层：`mapMoleculeToAudio(const ChemicalDescriptors&) -> SynthesisParameters` + `buildWaveTable(const ChemicalDescriptors&, const String&) -> WaveTable`。无状态、线程无关，见 §9。
+Bell 音色引擎：`BellVoice`（三正弦振荡器 + 包络 + 低通 + 噪声击打）、`BellPatch`（复刻 Vital BELL Reflections 的参数集）、`mapMoleculeToBellParams()`（SMILES 哈希 → 33 参数）、`buildNearSineWave()`（osc_1 近正弦波表）、`BellParamId`/`bellParamDef()` 参数元数据。详见 §9。
+
+> `MoleculeAudioMapper.h/.cpp` 现在是历史遗留：只保留 `kWaveTableSize`、`WaveTable`、`kOsc1Wave` 等类型/常量定义，旧的 `mapMoleculeToAudio()`/`buildWaveTable()` 已不再被调用。
 
 ---
 
@@ -1167,227 +1032,108 @@ cmake-build-ninja\OrganicChemistry_artefacts\Release\
 
 ---
 
-## 9. 分子 → 声音映射层（已实现）
+## 9. Bell 音色引擎（当前方案）
 
-本节描述如何把画布上搭建的分子变成可听的声音。整条链路已落地，可通过调整 §9.3 的公式微调音色。
+本节描述把画布上搭建的分子变成可听的钟声。核心是复刻 Vital「BELL Reflections」预设的
+三正弦振荡器引擎；分子不再直接决定波形 / 效果参数，而是通过 SMILES 哈希映射到 Bell 引擎的
+33 个参数（见 §1.5）。
 
-### 9.1 声音链（v0.13 重构）
+### 9.1 声音链
 
 ```
                      ┌──────────── 每 voice（×8）────────────┐
-MIDI ──► note on ──► │  wavetable 查表（波形来自分子 SMILES） │
-                     │  + 相位畸变 warp                       │
-                     │  + 子振荡器（低八度正弦）              │
-                     │  + 噪声层（一阶低通白噪）              │
-                     │  → 滤波器驱动（tanh）                  │
-                     │  → 形态滤波器 LP↔BP↔HP↔Notch          │
-                     │  → 幅度包络（可调曲线）→ 声像          │
+MIDI ──► note on ──► │  OSC1 分子波表（近正弦，基频）           │
+                     │  OSC2 正弦 +12/+24 八度（squeeze 失真）  │
+                     │  OSC3 正弦 +12/+24 八度                  │
+                     │  → OSC2 经低通滤波（keytrack + ENV2）    │
+                     │  → 噪声击打采样（bandpass）              │
+                     │  → 幅度包络（钟形）+ ENV2               │
                      └────────────────┬───────────────────────┘
                                       │  混合
-     低切(HP) → 高切(LP) → 梳状共振体 → 元音共振峰 → 失真
-        → 合唱 → 混响 → 延迟（可乒乓）
-        → 主电平 → LFO1 幅度/声像 → 立体声宽度
-        → 分子切换 fade × 空分子静音门 → 软削波 → 输出
+     多段压缩 → 合唱（4 声部）→ 延迟（乒乓）→ 混响
+        → 降采样失真（BITCRUSH）→ 主电平 → 软削波 → 输出
 ```
 
-**v0.13 的关键结构变化：形态滤波器从全局链下沉到每个 voice 内部。**
-只有在 voice 里才拿得到这个音符的音高、力度和包络——`key trk`、`vel trk`、`ENV2 → filter`
-这些现代合成器的基本功能在全局链上根本无法实现（全局滤波器面对的是所有音混完的信号，
-不知道它们各自是什么音）。代价是 CPU 从一个滤波器变成八个，换来的是音色在整个键盘上
-可控。原来的"包络跟随器驱动自动哇音"随之取消，改由每个音自己的幅度包络直接驱动，
-这既更准确也更省。
-
-#### 调制源一览
-
-| 源 | 作用域 | 目标 | 说明 |
-| --- | --- | --- | --- |
-| **幅度包络** | 每 voice | 音量、滤波截止 | ADSR + `Env curve`（线性↔指数） |
-| **ENV2 调制包络** | 每 voice | 滤波（双向）、音高、warp | 独立 ADSR，专管音头形态 |
-| **LFO1** | 全局 | 滤波、音高、幅度、声像 | 四种波形连续插值 + 淡入 |
-| **LFO2** | 每 voice | warp、滤波 | 从音符起点自由运行 |
-| **每音随机** | 每 voice | 音高、滤波、声像 | note on 时抽一次，整音符保持 |
-| **慢漂移** | 每 voice | 音高、滤波 | 每 voice 相位与速率各带 ±25% 抖动 |
-| **key / velocity 跟踪** | 每 voice | 滤波 | 音高、力度直接映射到截止频率 |
-
-> **LFO1 的全局性怎么保证**：voice 在 `synth.renderNextBlock()` 里先跑，此时主相位还没推进。
-> 处理器在渲染前拍一张 `lfoBlockStartPhase` 快照，voice 与全局段都从这个起点、按相同速率
-> 各自推进，算出的序列因此完全一致。波形函数 `lfoShapeValue()` 也刻意做成**无状态**——
-> 采样保持那一档用固定伪随机阶梯表按相位索引，而不是各自跑随机数发生器，否则各 voice 会
-> 算出不同的值，"全局"就不成立了。
+**音频路径**：`processBlock` → `processBellBlock`。旧分子 wavetable DSP 已被 `return` 旁路，
+代码仍在但不再执行（见 §9.8）。
 
 #### 各环节实现
 
 | 环节 | 实现 | 说明 |
 | --- | --- | --- |
-| 声源 | `WaveTableVoice` | 8 复音 wavetable 查表；波形由分子 SMILES 生成 |
-| 相位畸变 | `p' = p^(1+2·warp)` | 单调映射保持波形连续（无爆音），但正负半周不对称 → 生成偶次谐波 |
-| 子振荡器 | 低八度纯正弦 | 给大环分子补低频重量，混入后归一化防溢出 |
-| **噪声层** | 白噪 → 一阶低通 | `Noise colour` 把截止在 200 Hz ~ 12 kHz 之间指数移动。模拟吹气 / 弓毛 / 材料摩擦 |
-| **Glide** | 一阶趋近 | `angleDeltaBase` 朝目标音高指数逼近，时间常数 = `Glide` |
-| 幅度包络 | 逐样本状态机 | ADSR；`Env curve` 用 `env^(1+2.5c)` 把线性衰减弯成指数 |
-| **ENV2** | 同一套状态机 | 独立参数，输出送三个目标 |
-| **每 voice 滤波器** | `MorphFilter`（自研 TPT SVF） | Zavalishin 拓扑保持变换 SVF 同时产出 LP/BP/HP，可在 LP→BP→HP→Notch 间**连续插值**。截止频率在**对数域**累加所有调制量后再做一阶平滑（避免逐块跳变产生的 click） |
-| **key tracking** | `keyOct = keyTrk · log₂(f / 261.63)` | 以中央 C 为参考。= 1 时截止与音高 1:1 同步 |
-| **梳状共振体** | `DelayLine` + 阻尼反馈 | Karplus-Strong 最简形式。延迟 = `sr / (最近音符频率 × Comb tune)`，反馈回路里挂一阶低通 —— 没有阻尼听起来像金属管，有阻尼才像木头 |
-| **共振峰滤波器** | 三路并联带通 | Peterson & Barney (1952) 成年男声 F1/F2/F3，A/E/I/O/U 之间连续插值，增益 0 / −7 / −12 dB |
-| 失真 | 四种曲线 | 0 tanh 软饱和 / 1 硬削波 / 2 波形折叠（±1 反射，最多 4 次）/ 3 降位量化 |
-| 合唱 | `DelayLine` × 2 + LFO | 12ms 基础延迟 + LFO 扫动读指针 |
+| OSC1 | 分子波表 `buildNearSineWave` | 近正弦（基频 + 少量 SMILES 哈希决定的谐波），随分子编辑更新 |
+| OSC2 | 纯正弦 + squeeze 相位失真 | +12/+24 八度，1–7 复音齐奏，经低通 |
+| OSC3 | 纯正弦 | +12/+24 八度，最亮高层 |
+| 低通 | `juce::dsp::StateVariableTPTFilter` | keytrack 跟随音高 + ENV2 调制截止（E9 溢出已修复，见 §12） |
+| 幅度包络 | 逐样本状态机 | 钟形：快起音 + 指数衰减 + 长释放 |
+| ENV2 | 同一套状态机 | 推动滤波截止（音头形态） |
+| 噪声击打 | noise 采样 → bandpass | 金属击打瞬态，SMILES 哈希选采样 |
+| 多段压缩 | `MultibandCompressor` | 三频段（300/3000 Hz 交叉），mix 很小接近旁通 |
+| 合唱 | `DelayLine` × 4 + LFO | 4 声部，基础延迟 8/10/12/14 ms，相位各差 90° |
+| 延迟 | `DelayLine` × 2 交叉反馈 | 乒乓延迟 |
 | 混响 | `juce::dsp::Reverb` | 按块处理 |
-| 延迟 | `DelayLine` × 2 + 交叉反馈 | **乒乓**：反馈按 `DelayPingPong` 比例交叉送到对侧声道；delay 时间逐样本平滑并保留小数（fractional delay） |
-| 立体声宽度 | mid/side | width 0 = mono，1 = 原样 |
-| 弱 fade | `triggerFade()` | 分子变化时 15ms 淡出 + 20ms 淡入，并清空 delay / reverb / chorus / 共振体 / 共振峰状态 |
-| **空分子静音门** | 12 ms `LinearSmoothedValue` | 画布无原子时压到零，并 `allNotesOff` 掐掉发声中的音符（不留混响尾巴） |
+| 降采样失真 | `DownsampleDistortion` | BITCRUSH 宏驱动 sample & hold |
 | 软削波 | `std::tanh` | 末端软限幅 |
 
-#### ⚠️ 已知简化：梳状共振体的音高跟踪
+### 9.2 分子 → Bell 参数（`mapMoleculeToBellParams`）
 
-共振体位于**全局链**（所有 voice 混合之后），拿不到单个 voice 的音高，因此跟踪的是
-"最近触发的音符"（voice 在 `startNote` 里调 `reportNoteFrequency()`）。单音演奏完全准确，
-弹和弦时以最后按下的音为准。要做到严格正确需要把共振体也下沉到 voice，代价是 8 条
-延迟线，当前收益不值这个成本。
+分子不再走「化学性质 → 合成参数」的单调映射，而是：
 
-**设计取向**：波形与效果器参数全部由分子决定，且每条映射都能用一句化学话讲清楚。分子变化会带来剧烈且**可归因**的音色差异。
+1. **种子**：`canonicalSmiles()` 经 FNV-1a 哈希 → `xorshift32` PRNG。
+2. **确定性**：同一分子永远得到同一串参数（可复现）。
+3. **不可预测**：加/删原子让全部参数无规律重排，音色整体换一个。
+4. **共性范围**：所有参数落在「冬季钟声/键盘」好音色的范围内（见 §1.5 表格）。
 
-### 9.2 化学描述符（`Molecule::computeDescriptors()`）
+化学描述符 `ChemicalDescriptors`（21 项）仍在 `Molecule::computeDescriptors()` 中计算，
+定义与文献出处见 §7.7，但当前 `mapMoleculeToBellParams` **不再使用描述符**（`ignoreUnused(d)`），
+只依赖 SMILES 哈希。
 
-共 21 个，定义、文献出处与简化程度详见 **§7.7**。此处只列清单：
+### 9.3 波形生成（`buildNearSineWave`）
 
-| 类别 | 字段 |
-| --- | --- |
-| 组成 / 拓扑 | `heavyAtomCount`、`heteroAtomCount`、`carbonCount`、`ringCount`、`doubleBondCount`、`tripleBondCount`、`longestChainLength`、`branchCount`、`molecularWeight`、`degreeOfUnsaturation` |
-| 环 / 芳香性 | `aromaticRingCount`（Hückel 4n+2）、`maxRingSize` |
-| 类药性 | `rotatableBondCount`（Veber）、`hBondDonorCount` / `hBondAcceptorCount`（Lipinski）、`tpsa`（Ertl 2000）、`clogP`（Wildman–Crippen 1999）、`fractionSp3`（Lovering 2009） |
-| 拓扑指数 | `wienerIndex`（Wiener 1947）、`randicIndex`（Randić 1975）、`bondPolarity`（Pauling 电负性差） |
+osc_1 波形是近正弦（不是旧的任意波形）：
 
-### 9.3 映射规则（`MoleculeAudioMapper::mapMoleculeToAudio()`）⭐
-
-> **完整的 70 条映射对照表已前置到 §1.5**，那里按合成器分区列出了驱动量、公式、范围和听感，
-> 是调音时唯一需要看的地方。本节只保留设计原则，避免两处表格各自漂移。
-
-**设计原则**：
-
-1. 每个参数由一个**化学性质**驱动，映射方向必须能用一句话讲清楚。
-   "芳香环维持环电流，所以它让回声左右循环"是好规则；"环数乘 0.3"不是。
-2. 映射单调：任何一次分子编辑都让声音朝同一个方向走，用户能建立因果直觉。
-3. 归一化用 `saturateCount(v, ceiling) = clamp(v/ceiling, 0, 1)`，天花板调低，
-   让少量原子就逼近满值——小分子之间的差异也要听得出来。
-4. 部分描述符**刻意**驱动多个参数（`aromaticRingCount` 同时影响谐振、高切共振、
-   共振体反馈和乒乓延迟）。一个化学性质本就应该在多个听感维度上同时体现。
-5. 少数参数**不被映射**（目前只有 `MasterLevel`），留给用户。
-
-**"有机感"从哪来（v0.13 的设计目标）**：
-
-调研 Serum / Vital 之后，把"现代"拆成两件事——**调制深度**（多 LFO / 多包络 /
-key-vel 跟踪 / 可指派目标）和**每音差异**。前者是工程量，后者才是"有机"的关键：
-
-| 让声音显得"死"的原因 | 对应的解法 | 化学依据 |
-| --- | --- | --- |
-| 同一个音符每次输出逐样本相同 | **每音随机**（音高 / 滤波 / 声像） | 构象异构：n 个可旋转键 ≈ 3ⁿ 个构象，每次"存在"的形状都不同 |
-| 多音齐奏时整体同步摆动 | 每 voice **独立漂移相位 + ±25% 速率抖动** | 分子各自独立扩散，不会同步 |
-| 频谱从头到尾静态 | **ENV2** 指派到滤波 / 音高 / warp | 音头的形态变化 |
-| 高音区越弹越闷 | **key tracking** | 环状刚性分子音色应全键盘一致 |
-| 力度只改音量 | **velocity → 滤波** | 极性键对外场响应强 |
-| 衰减是直线 | **Env curve**（线性↔指数） | 真实乐器的衰减是指数的 |
-| 没有物理体感 | **梳状共振体**（跟随音高） | 环 = 共鸣腔体 |
-| 不像"活物" | **元音共振峰** | 氢键供体是生物分子的标志 |
-
-### 9.3.1 波形生成（`MoleculeAudioMapper::buildWaveTable()`）
-
-波形本身成为最主要的音色载体，完全不受预设波形限制：
-
-1. **种子**：`canonicalSmiles()` 经 FNV-1a 哈希 → `xorshift32` PRNG。同一分子永远得到同一波形。
-2. **谐波数量**：`numHarmonics = clamp(heavyAtomCount + 2·DoU + 2·branchCount + heteroAtomCount, 4, 160)`。分子越复杂，谐波越多、音色越"毛糙"。
-3. **谐波衰减**：`falloff = 1.7 − (DoU/5) × 1.1`，幅度 `k^−falloff`。不饱和度越高衰减越慢 → 更多高频 → 波形越尖锐/方波化；饱和小分子衰减快 → 更接近正弦。
-4. **化学性质塑形谐波结构（v0.11 新增）**：
-   - **芳香性**：离域 π 体系是高度对称、共振稳定的闭合环流。对应到频谱上偏向「只保留奇次谐波」的中空音色（单簧管式）——奇次 × (1 + 0.35·aromatic)，偶次 × (1 − 0.70·aromatic)。同时谐波幅度抖动随芳香性减小 → 音色更纯净。
-   - **键极性**：偶极矩带来正负半周不对称 → 偶次谐波 + 0.55·polarity。
-   - **Fsp3**：饱和分子相位更规整（相位随机范围 × (1 − 0.55·sp3)），不饱和分子相位散乱。
-5. **相位**：由 PRNG 决定，随机但可复现。
-6. **合成**：`samples[i] = Σ amp[k]·sin((k+1)·θ + phase[k])`，加性合成单周期波形。
-7. **归一化**：峰值归一化到 0.95（给 8 复音叠加留 5% 余量）。
-
-结果：从近似正弦（饱和小分子）→ 中空的奇次谐波音色（芳香环）→ 富含高次谐波的尖锐/方波化音色（不饱和大分子），波形形状随结构式剧烈变化。
-
-### 9.3.2 参数平滑：块速率与样本速率必须同基准（v0.12 修复）⭐
-
-**症状**：拖动 Test 面板里的 `Dist mix`、`Reverb wet`、`Master level` 等滑杆，声音不是立即变化，而是要**几十秒**才慢慢滑到位。但 `Filter freq`、`Delay time` 这些却是实时的。
-
-**根因**：`juce::SmoothedValue` 的斜坡是按**样本**计数的，`getNextValue()` 每调一次只前进一步。效果链里两类参数的消费方式不同：
-
-| 类型 | 消费位置 | 每块前进步数 |
-| --- | --- | --- |
-| 样本速率（滤波器、延迟…） | `for (s = 0; s < numSamples; ++s)` 循环**内** | `numSamples` ✅ |
-| 块速率（失真、合唱、混响、主输出…） | 循环**外**，块开头读一次 | **1** ❌ |
-
-于是 100 ms 斜坡（48 kHz = 4800 步）对块速率参数变成了 **4800 个音频块**；512 样本的块长下就是 4800 × 512 / 48000 ≈ **51 秒**。滤波器类因为在循环内取值，反而是正常的 100 ms——这正好解释了"有的实时有的不实时"。
-
-**修法**：块速率参数改用 `skip(numSamples)`，一次推进整块：
-
-```cpp
-auto blockParam = [&] (organic::ParamId id)
-{
-    return paramSmoothers[(size_t) id].skip (numSamples);
-};
-```
-
-**附带修掉的一个隐患**：`LfoRate` 原来在 2b 段（形态滤波器）和 7b 段（幅度/声像调制）各读一次，改成 `skip` 后就会**每块前进两倍**，LFO 速率的平滑会跑得比别人快一倍。现在在块开头统一取一次 `lfoRateHz`，两处共用。
-
-> 教训：一个 `SmoothedValue` 在一个 `processBlock` 里必须**恰好被推进 numSamples 步，且只推进一次**。混用 `getNextValue()`（逐样本）和 `skip()`（整块）本身没问题，但同一个参数不能被消费两遍。
+1. 种子：SMILES 哈希 → xorshift32。
+2. 谐波：h2–h6 各独立随机，偶次（h2）可更强（温暖），奇次克制（避免刺耳）。
+3. 总谐波能量约束 ≤ 0.5，保证最坏情况仍是"温暖的正弦"，不会跑偏成锯齿/方波。
+4. 峰值归一化到 0.95。
 
 ### 9.4 线程安全
 
-- **UI 线程**：`MoleculeCanvas::onMoleculeChanged` 回调 → `Molecule::computeDescriptors()` + `Molecule::canonicalSmiles()` → `mapMoleculeToAudio()` / `buildWaveTable()` → `processor.setSynthesisParameters()` / `processor.setWaveTable()`。
-- **音频线程（效果参数）**：`setSynthesisParameters()` 只写 8 个 `std::atomic<float>` 目标值；`processBlock()` 每块用 `LinearSmoothedValue`（约 100ms 斜坡）平滑过渡。
-- **音频线程（波形）**：`setWaveTable()` 用**无锁双缓冲**——写入"非活跃"缓冲后原子切换 `activeTableIndex`；voice 每块开头取一次活跃表指针，块内稳定。音频线程要么读到完整旧波形、要么读到完整新波形，永不读到半新半旧数据。
-- **音频线程（弱 fade）**：`triggerFade()` 只置位一个 `std::atomic<bool> fadeRequested`；`processBlock()` 末尾用 `exchange(false)` 消费它，并在逐样本循环里驱动 `FadeState`（idle → dip → recover）。`fadeGain` / `fadeDipStep` / `fadeRecoverStep` 等状态仅音频线程访问，无跨线程竞争。
-- **关键保证**：音频线程**绝不**直接访问 `Molecule`（UI 线程会改它），只消费映射后不可变的浮点值 / wavetable 数组。
+- **UI 线程**：`MoleculeCanvas::onMoleculeChanged` → `applyMoleculeToAudio()` → `buildNearSineWave()` + `mapMoleculeToBellParams()` + `hashSmiles()` 选采样 → `setMoleculeWave()` / `setBellParams()` / `setNoiseSampleIndex()`。
+- **音频线程**：BellVoice 只读 `getBellParam()` / `getMacro()` / `getOsc1WaveData()` / `getNoiseSampleData()` 等原子/只读快照，不访问 Molecule。
+- **Bell 参数**：`std::array<std::atomic<float>, kNumBellParams>`，UI 写、音频读。
 
 ### 9.5 涉及文件
 
 | 文件 | 职责 |
 | --- | --- |
-| `MoleculeModel.h/.cpp` | `ChemicalDescriptors`（21 项）+ `computeDescriptors()` + `perceiveRings()` + `stericNumber()`/`idealBondAngle()` + `toValueTree()`/`fromValueTree()` 持久化 |
-| `MoleculeAudioMapper.h/.cpp` | `ParamId`（37 项）+ `paramDef()` 元数据表 + `mapMoleculeToAudio()` + `WaveTable`/`buildWaveTable()` |
-| `PluginProcessor.h/.cpp` | `MorphFilter`（TPT SVF）+ wavetable 双缓冲 + 效果链 + 平滑器 + LFO / 包络跟随 + `setSynthesisParameters()`/`setWaveTable()` + `triggerFade()`/软削波 + 持久化 |
-| `TestPanel.h/.cpp` | 参数调试面板，**完全由 `ParamId`/`paramDef` 表驱动**，加参数无需改此文件 |
-| `PresetMenu.h/.cpp` | 自绘的分子预设选择面板（见 §7.9） |
-| `PluginEditor.cpp` | `onMoleculeChanged` 回调接线（含 `triggerFade()` 与分子状态保存）+ 启动时恢复分子 |
-| `MoleculeCanvas.h/.cpp` | `restoreMolecule()` 恢复分子并触发音频重映射 + 右上角波形预览窗口 `paintWavePreview()` |
+| `BellEngine.h/.cpp` | `BellVoice`（三正弦 + 包络 + 滤波 + 噪声击打）+ `BellPatch` + `mapMoleculeToBellParams()` + `buildNearSineWave()` + `BellParamId`/`bellParamDef()` |
+| `BellWave.h` | osc_1 默认波表常量 `kOsc1Wave` |
+| `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（手动锁定段） |
+| `PluginProcessor.h/.cpp` | `processBellBlock()`（效果链）+ Bell 参数原子数组 + 噪声采样库 + 状态持久化 |
+| `PluginEditor.cpp` | `applyMoleculeToAudio()`：分子 → Bell 参数 + osc_1 波表 + 采样 |
+| `TestPanel.h/.cpp` | 33 个 Bell 参数调试面板（v1.0.0 起屏蔽） |
 
 ### 9.6 DAW 工程持久化
 
 - 分子拓扑（重原子元素 + 键连接 + 键级）经 `Molecule::toValueTree()` 序列化为 `juce::ValueTree`，氢原子是派生数据、恢复时自动重建。
-- UI 线程在 `onMoleculeChanged` 中调用 `processor.setMolecularState()` 保存；宿主保存工程时 `getStateInformation()` 将其转成 XML 写出，加载工程时 `setStateInformation()` 反序列化回 `molecularState`。
-- 编辑器构造时读取 `processor.getMolecularState()`，若有保存状态则 `canvas.restoreMolecule()` 恢复分子，恢复过程会再次触发 `onMoleculeChanged`，重新派生波形与效果参数。
-- 线程安全：`molecularState` 由 `juce::CriticalSection` 保护，UI 线程写、宿主保存线程读互不冲突。
+- UI 线程在 `onMoleculeChanged` 中调用 `processor.setMolecularState()` 保存；宿主保存工程时 `getStateInformation()` 转成 XML 写出，加载时 `setStateInformation()` 反序列化回 `molecularState`。
+- 编辑器构造时读取 `processor.getMolecularState()`，若有保存状态则 `canvas.restoreMolecule()` 恢复分子，恢复过程再次触发 `onMoleculeChanged` → `applyMoleculeToAudio()` 重新派生 Bell 参数。
+- 线程安全：`molecularState` 由 `juce::CriticalSection` 保护。
 
-### 9.6.1 右上角波形预览窗口
+### 9.7 波形预览
 
-- **位置**：`MoleculeCanvas::paintWavePreview()`，绘制在分子画布右上角（设计尺寸 180×50，随 `uiScale` 等比缩放）。
-- **数据来源**：`MoleculeCanvas::previewWaveProvider` 回调 → `OrganicChemistryAudioProcessor::getPreviewWave()`。
-- **显示内容**：`getPreviewWave()` 始终返回当前分子 wavetable 的单周期波形（静态预览，不随输出信号变化），随分子拓扑改变而更新。
-- **线程安全**：只读取 wavetable 双缓冲的活跃表（无锁原子索引），UI 线程只读、音频线程只写，无竞争。
+- 右上角波形预览显示 osc_1 的分子波表（`getOsc1WaveData()` → `moleculeWave`），随分子编辑更新。
+- 线程安全：音频线程写 `moleculeWave`，UI 线程只读。
 
-### 9.7 调试建议（按分子操作 → 听感）
+### 9.8 历史：旧 wavetable 方案（已旁路）
 
-| 想听什么 | 怎么搭分子 | 触发的参数 |
-| --- | --- | --- |
-| **音色本质改变** | 加双键/三键/环（改不饱和度） | 波形衰减指数、高切、drive、混响阻尼 |
-| **中空的"单簧管"音色** | 搭一个苯环（六元环全双键交替） | 芳香性 → 奇次谐波突出、谐振升高、乒乓延迟 |
-| **变大变远** | 多搭重原子 | 混响房间 + 立体声宽度 + 波形谐波数 |
-| **变暗变油** | 搭长烷基链（纯 C/H） | cLogP 升高 → 形态滤波器频率下降 |
-| **变亮变"极性"** | 加 O/N（羟基、羰基、胺） | TPSA 升高 → 滤波器形态从 LP 向 BP/HP/Notch 变形 |
-| **动起来（自动扫）** | 搭长的可自由旋转的链（非环、非端基） | 可旋转键 → LFO 速率 + 滤波包络量 |
-| **颤音 / 声像摆动** | 加电负性差大的键（C–O、C–N、O–H） | 键极性 → LFO→amp / LFO→pan |
-| **低频重量** | 搭大环（环己烷、苯环） | maxRingSize → 子振荡器 |
-| **粗砺失真** | 减少 sp³ 碳（多用双键/芳香） | Fsp3 → 失真曲线从 tanh 转向折叠/降位 |
-| **回声左右跳** | 搭芳香环 | 芳香环电流 → 乒乓延迟 |
-| **长回声 / 长尾** | 拉长碳链 | 延迟时间 + release |
-| **持续不衰减** | 加羟基/胺基（氢键供体） | 供体数 → sustain 电平 |
-
-**测试面板**：顶部 `Test` 按钮展开，37 个参数按处理阶段分类。拖动任一滑杆即把该参数标记为「手动」（标签变蓝），此后分子变化不再覆盖它；`Reset to auto` 全部恢复跟随映射。**新增的 15 个参数已自动出现在面板中**——面板完全由 `ParamId` / `paramDef` 表驱动，加参数无需改 UI 代码。
-
-改系数：效果参数公式在 `mapMoleculeToAudio()`，波形公式在 `buildWaveTable()`。
+v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」的 wavetable 引擎（MorphFilter、
+梳状共振体、元音共振峰、LFO1/2、每音随机、慢漂移、glide 等）。这套 DSP 代码仍保留在
+`PluginProcessor.h/.cpp`（`MorphFilter`、`FormantFilter`、`combLine*`、`lowCutFilter`、
+`highCutFilter`、`paramSmoothers`、`waveTables`、`LoudnessCalibrationThread` 等），
+但 `processBlock` 已改为直接 `processBellBlock` 并 `return`，旧 DSP 不再执行。
+若要回退，把 `processBlock` 里那两行去掉即可（版本历史 v0.14 记录了旧的映射机制）。
 
 ---
 
@@ -1406,11 +1152,11 @@ auto blockParam = [&] (organic::ParamId id)
 | **加分子预设** | `MoleculeModel.cpp` 的 `moleculePresets()` 表，写元素数组 + 键三元组；芳香环写 Kekulé，逐原子核对价键不超限 |
 | **只加常用名不进预设** | `namedMolecules()` 的 `extras` 段，同样写拓扑。**不要手写 SMILES**（见 §7.10） |
 | **改预设面板样式** | `PresetMenu.cpp` 顶部匿名 namespace 的尺寸与颜色常量 |
-| **调某条化学 → 音色映射** | 先在 **§1.5** 定位，再改 `mapMoleculeToAudio()` 对应那一行 |
-| **加调制目标** | voice 里加读参数 → 在 `renderNextBlock` 的调制求和处累加。滤波相关的量一律在**对数域（倍频程）**相加 |
-| **共振体 / 共振峰手感** | `PluginProcessor.cpp` 的 2b / 2c 段；共振峰频率表在 `PluginProcessor.h` 的 `FormantFilter::setVowel()` |
+| **调某个分子 → 音色** | 改 `BellEngine.cpp::mapMoleculeToBellParams()` 对应那一行（见 §1.5） |
+| **调 Bell 默认音色** | `BellEngine.h` 的 `bellReflectionsPatch()` / `bellParamDef()` 表（默认值与范围） |
+| **调 osc_1 波形** | `BellEngine.cpp` 的 `buildNearSineWave()`（谐波幅度与总能量约束） |
 | 改键长 / 布局手感 | `MoleculeModel.h` 底部的 `kHeavyBondLength` / `kSpringK` / `kRepulsionK` / `kDamping` |
-| **加新合成参数** | `MoleculeAudioMapper.h` 的 `ParamId` 枚举 + `paramDef()` 表（**测试面板会自动显示，无需改 UI**）→ 再在 `mapMoleculeToAudio()` 加映射 + `PluginProcessor.cpp` 加 DSP |
+| **加新 Bell 参数** | `BellEngine.h` 的 `BellParamId` 枚举 + `bellParamDef()` 表 + `applyBellParams()` 映射（测试面板会自动显示，无需改 UI） |
 | **加新化学描述符** | `MoleculeModel.h` 的 `ChemicalDescriptors` + `computeDescriptors()`，并在 §7.7 补文献出处 |
 | 改动画速度 | 各 `advanceAnimation()` 里的 `dt * 系数`（见 §4.2 表） |
 | 改配色 / 视觉风格 | `MoleculeCanvas.cpp` 顶部匿名 namespace 的颜色常量 |
@@ -1420,8 +1166,8 @@ auto blockParam = [&] (organic::ParamId id)
 | 改结构式格式 | `Molecule::structuralFormula()`（无环）+ `ringStructuralFormula()`（含环） |
 | 改/加常见物质常用名 | `MoleculeModel.cpp` 的 `kCommonSubstances[]` 表 |
 | 改常用名显示样式 | `MoleculeCanvas::paintStructuralFormula()` 的 `COMMON NAME` 分支 |
-| 调音色映射规则 | `MoleculeAudioMapper.cpp` 的 `mapMoleculeToAudio()`（见 §9.3） |
-| 改效果链结构 | `PluginProcessor.cpp` 的 `processBlock()` + 成员声明 |
+| 调音色映射规则 | `BellEngine.cpp` 的 `mapMoleculeToBellParams()`（见 §9.2） |
+| 改效果链结构 | `PluginProcessor.cpp` 的 `processBellBlock()` + 成员声明 |
 
 ---
 

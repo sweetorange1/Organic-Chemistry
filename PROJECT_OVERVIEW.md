@@ -1454,4 +1454,34 @@ auto blockParam = [&] (organic::ParamId id)
 
 ---
 
+## 12. 本次开发记录（v1.0.1）
+
+> 本轮定位并修复了一个严重崩溃：高音高 MIDI 输入会让合成器永久失效。
+
+### 12.1 症状
+- 向当前音源发送很高音高的 MIDI 信号（如甲烷 CH4 时输入 E9，即 MIDI note 124），会先出现一声电流声，随后**整个合成器不再响应任何 MIDI 输入**，像"爆掉了"。
+- 不同分子触发崩溃的音高不同，说明触发阈值与分子的音色映射参数（滤波截止 / keytrack）有关。
+
+### 12.2 根因
+音频路径为 Bell 模式（`PluginProcessor::processBlock` → `processBellBlock`，旧分子模式 DSP 已 `return` 旁路）。崩溃点在 `BellVoice::updateFilter`：
+
+```cpp
+cutoffHz = filterCutoff × 2^(keytrackCents/12) × 2^(env2ToFilter·env2·4/12)
+```
+
+高音高下 keytrack 把低通滤波器的截止频率推到远超 Nyquist（24000 Hz，E9 时可达 10⁵ Hz 量级）。`juce::dsp::StateVariableTPTFilter::setCutoffFrequency` 内部计算 `g = tan(π·fc/sr)`，在 fc 超过 Nyquist 后 `tan()` 溢出为 Inf/NaN。TPT 是递归反馈结构，状态一旦被 NaN 污染就**永久保持 NaN**（即使该音符释放、voice 被复用，状态仍是 NaN），于是所有后续输出变 NaN → 静音。
+
+### 12.3 修复
+1. **钳制截止频率**（`BellEngine.cpp::updateFilter`）：`cutoffHz = jlimit(20, sampleRate×0.45, cutoffHz)`，从根上阻止 tan 溢出（0.45×sr 低于 Nyquist，留有安全余量）。
+2. **NaN 兜底**（`BellEngine.cpp::renderNextBlock`）：每个输出采样前 `std::isfinite` 检测，非有限值则输出 0 并 `reset()` 两个滤波器，避免单次溢出永久污染。
+3. **回归测试**（`BellTests.cpp`）：新增 E9/G9（note 124/127）高音渲染 + 高音后普通音恢复检测。
+
+### 12.4 涉及文件
+| 文件 | 改动 |
+| --- | --- |
+| `BellEngine.cpp` | `updateFilter` 截止频率钳制；`renderNextBlock` 输出 NaN 兜底 + 滤波器重置 |
+| `BellTests.cpp` | 新增高音高 NaN 检测与整机恢复回归测试 |
+
+---
+
 *文档维护：本文档应与代码同步更新。若修改了 §7 涉及的任何化学规则，请同时更新该节的对照表与简化说明。*

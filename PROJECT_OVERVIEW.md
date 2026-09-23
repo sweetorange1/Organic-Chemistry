@@ -46,7 +46,7 @@
 - **钟形包络**：快起音 + 指数衰减 + 长释放，配 ENV2 调制包络（推动滤波截止）
 - **分子 → Bell 参数映射**：分子 SMILES 经确定性哈希映射到 **33** 个 Bell 参数 + 4 个宏（WET / BITCRUSH / DETUNE / ATTACK），
   非单调、确定但不可预测（**完整对照见 §1.5**）
-- **EnvelopePanel 包络编辑器**：图形化 ADSR（A/D/R 水平拖、S 垂直拖），可手动锁定单个段，`Reset` 交还分子
+- **EnvelopePanel（未接线）**：ADSR 图形编辑器组件文件已写好，但尚未接入界面；当前 ADSR 完全跟随分子
 - **波形预览**：右上角实时显示 osc_1 的分子波表（近正弦 + 少量 SMILES 哈希决定的谐波）
 - **Test 面板（v1.0.0 起屏蔽）**：33 个 Bell 参数按分类展示，`kTestPanelEnabled = false` 暂时隐藏
 - **自动更新检查 + 更新弹窗**：启动后延迟 5s 异步请求 `iisaacbeats.cn/api/update/check`（5s 超时、失败静默），仅有新版本时弹原生更新窗（`network/` + `ui/UpdateDialog`）
@@ -109,8 +109,8 @@ Molecule（画布拓扑）
 
 #### 1.5.2 手动锁定
 
-映射只覆盖 EnvelopePanel 的四个包络段，用户拖过某段即标记为「手动」，分子变化不再覆盖它；
-`Reset` 交还分子驱动。其余 Bell 参数（振荡器 / 滤波 / 效果器）当前完全跟随分子。
+当前**没有**手动锁定入口：全部 33 个 Bell 参数（含 ADSR 的 Attack/Decay/Release，Sustain 固定 0）
+完全跟随分子 SMILES 哈希。`EnvelopePanel` 组件文件已写好但尚未接线/编译（见 §2）。
 
 #### 1.5.3 声源（三个正弦振荡器）
 
@@ -178,7 +178,7 @@ Molecule（画布拓扑）
 | 画布留空 | 静音（`setMoleculeEmpty(true)`） |
 | 放任意重原子 | 立即出声，音色由该分子的 SMILES 哈希决定 |
 | 改动任意原子/键 | 整个音色换一个（不可预测，但同分子可复现） |
-| EnvelopePanel 手动拖过某段 | 该段锁定，分子变化不再覆盖 |
+| 手动调节包络 | 当前无入口（EnvelopePanel 未接线，Test 面板已屏蔽） |
 
 ---
 
@@ -194,7 +194,7 @@ I:\Organic Chemistry\
 ├── PluginEditor.h/.cpp         顶层编辑器：布局 / 信息栏 / 缩放 / 动画时钟
 ├── BellEngine.h/.cpp           【Bell 引擎】三正弦振荡器 voice + 分子→Bell 参数映射
 ├── BellWave.h                  osc_1 默认波表常量
-├── EnvelopePanel.h/.cpp        ADSR 图形编辑器（手动锁定单个段）
+├── EnvelopePanel.h/.cpp        ADSR 图形编辑器（组件已写好，未接线/未编译）
 ├── MoleculeModel.h/.cpp        【化学核心】分子数据结构 + 成键规则 + 布局求解
 ├── MoleculeCanvas.h/.cpp       画布：坐标变换 / 命中测试 / 绘制 / 交互
 ├── ElementBar.h/.cpp           底部元素选择栏
@@ -1109,7 +1109,7 @@ osc_1 波形是近正弦（不是旧的任意波形）：
 | --- | --- |
 | `BellEngine.h/.cpp` | `BellVoice`（三正弦 + 包络 + 滤波 + 噪声击打）+ `BellPatch` + `mapMoleculeToBellParams()` + `buildNearSineWave()` + `BellParamId`/`bellParamDef()` |
 | `BellWave.h` | osc_1 默认波表常量 `kOsc1Wave` |
-| `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（手动锁定段） |
+| `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（组件已写好，尚未接线/编译） |
 | `PluginProcessor.h/.cpp` | `processBellBlock()`（效果链）+ Bell 参数原子数组 + 噪声采样库 + 状态持久化 |
 | `PluginEditor.cpp` | `applyMoleculeToAudio()`：分子 → Bell 参数 + osc_1 波表 + 采样 |
 | `TestPanel.h/.cpp` | 33 个 Bell 参数调试面板（v1.0.0 起屏蔽） |

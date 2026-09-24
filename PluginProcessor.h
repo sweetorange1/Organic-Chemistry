@@ -143,7 +143,8 @@ private:
 //  setSynthesisParameters()。后台用固定演奏标定整条信号链的响度，再将
 //  波形、参数及补偿增益整体交给音频线程；音频线程不等待标定或访问 Molecule。
 // ============================================================
-class OrganicChemistryAudioProcessor : public juce::AudioProcessor
+class OrganicChemistryAudioProcessor : public juce::AudioProcessor,
+                                       public juce::AudioProcessorValueTreeState::Listener
 {
 public:
     OrganicChemistryAudioProcessor();
@@ -281,6 +282,21 @@ public:
     /** 批量设置全部 Bell 参数（分子映射结果）。线程安全。 */
     void setBellParams (const std::array<float, organic::kNumBellParams>& p);
 
+    /** 从保存的分子拓扑重建分子并映射到音频（波形 / Bell 参数 / 采样 / 静音）。
+        供 setStateInformation 在无界面加载工程时直接出声。 */
+    void applyMolecularStateToAudio();
+
+    // ===== ADSR 参数（宿主自动化 / MIDI CC / 持久化）=====
+
+    /** 从 UI 写入四个 ADSR 参数（attack/decay/release 秒，sustain 0..1），并通知宿主。 */
+    void setAdsrParams (float attack, float decay, float sustain, float release);
+
+    /** 宿主或 CC 改变了 ADSR 时置位；编辑器定时器消费一次后返回 true。 */
+    bool consumeAdsrDirty() noexcept { return adsrDirty.exchange (false); }
+
+    /** APVTS 参数变化回调（宿主自动化或 UI 经 APVTS 写入时触发）。 */
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
+
     /** 设置分子波表（近正弦），osc_1 使用。UI 线程调用。 */
     void setMoleculeWave (const organic::WaveTable& table);
 
@@ -313,6 +329,14 @@ private:
     // Bell 音色参数（BELL Reflections）。初始值为复刻默认值，
     // 由 TestPanel 滑杆实时覆盖。
     std::array<std::atomic<float>, organic::kNumBellParams> bellParams;
+
+    // ADSR 参数树（宿主自动化 / CC / 持久化）。四个参数对应 AmpAttack/Decay/Sustain/Release。
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    void handleMidiControlChanges (juce::MidiBuffer& midiMessages);
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState> apvts;
+    juce::AudioParameterFloat* adsrParams[4] = {};   // attack / decay / sustain / release
+    std::atomic<bool> adsrDirty { false };
 
     // 噪声击打采样库（noise 目录下的瞬态采样，构造时加载一次，之后只读）。
     struct NoiseSample

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.1-2A2A28" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.0-2A2A28" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/framework-JUCE%208.0.12-orange" alt="JUCE">
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License">
@@ -91,7 +91,7 @@ cmake --build cmake-build-release --config Release
 ```bash
 # Windows：需要先安装 Inno Setup 6
 build_installer.bat
-# 产物 Output：dist\OrganicChemistry_Setup_1.0.1_x64.exe
+# 产物 Output：dist\OrganicChemistry_Setup_1.1.0_x64.exe
 
 # macOS：打包通用二进制（x86_64 + arm64）的 pkg / dmg
 ./build_installer_mac.sh

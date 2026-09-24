@@ -63,6 +63,9 @@ public:
 
     std::function<void()> onMoleculeChanged;
 
+    /** 画布收到鼠标按下时回调（用于提交旋钮输入框等外部交互）。 */
+    std::function<void()> onPointerDown;
+
     /** 波形预览数据提供者：返回一组 -1..1 的采样，供右上角波形窗口绘制。
 
         由编辑器注入，指向处理器的 getPreviewWave()。无音频输出时返回分子

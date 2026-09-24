@@ -3,12 +3,12 @@ setlocal
 
 REM ============================================================
 REM  Organic Chemistry - Windows Release Installer Builder
-REM  Version : 1.0.1
-REM  Output  : dist\OrganicChemistry_Setup_1.0.1_x64.exe
+REM  Version : 1.1.0
+REM  Output  : dist\OrganicChemistry_Setup_1.1.0_x64.exe
 REM ============================================================
 
 set "APP_NAME=Organic Chemistry"
-set "APP_VERSION=1.0.1"
+set "APP_VERSION=1.1.0"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%organic_chemistry_installer.iss"
 set "DIST_DIR=%SCRIPT_DIR%dist"
@@ -26,21 +26,23 @@ if not exist "%ISS_FILE%" (
 REM 自动探测 VST3 顶层目录（即包含 "Organic Chemistry.vst3" bundle 的父目录）。
 REM 注意：传给 ISCC 用「相对脚本目录的路径」，避免项目路径含空格时
 REM 命令行参数被按空格拆分（相对路径 cmake-build-ninja\... 不含空格）。
+REM 探测以 bundle 内的实际插件二进制为准（Contents\x86_64-win\Organic Chemistry.vst3），
+REM 避免误匹配到残留的空 bundle 目录（如旧的 cmake-build-release-visual-studio）。
 set "VST3_DIR="
 
-if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
-  set "VST3_DIR=cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3"
-)
-
-if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
+if exist "%SCRIPT_DIR%cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3\Contents\x86_64-win\Organic Chemistry.vst3" (
   set "VST3_DIR=cmake-build-ninja\OrganicChemistry_artefacts\Release\VST3"
 )
 
-if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-release\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3" (
+if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3\Contents\x86_64-win\Organic Chemistry.vst3" (
+  set "VST3_DIR=cmake-build-release-visual-studio\OrganicChemistry_artefacts\Release\VST3"
+)
+
+if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-release\OrganicChemistry_artefacts\Release\VST3\Organic Chemistry.vst3\Contents\x86_64-win\Organic Chemistry.vst3" (
   set "VST3_DIR=cmake-build-release\OrganicChemistry_artefacts\Release\VST3"
 )
 
-if not defined VST3_DIR if exist "%LOCALAPPDATA%\Programs\Common\VST3\Organic Chemistry.vst3" (
+if not defined VST3_DIR if exist "%LOCALAPPDATA%\Programs\Common\VST3\Organic Chemistry.vst3\Contents\x86_64-win\Organic Chemistry.vst3" (
   set "VST3_DIR=%LOCALAPPDATA%\Programs\Common\VST3"
 )
 

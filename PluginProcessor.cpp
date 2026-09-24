@@ -708,6 +708,18 @@ OrganicChemistryAudioProcessor::OrganicChemistryAudioProcessor (bool isCalibrati
         bellParams[(size_t) i].store (organic::bellParamDef (i).defaultValue,
                                       std::memory_order_relaxed);
 
+    // 初始化 ADSR 参数树（宿主自动化 / MIDI CC / 持久化）。
+    apvts = std::make_unique<juce::AudioProcessorValueTreeState> (
+        *this, nullptr, "OrganicChemistryParams", createParameterLayout());
+    adsrParams[0] = dynamic_cast<juce::AudioParameterFloat*> (apvts->getParameter ("attack"));
+    adsrParams[1] = dynamic_cast<juce::AudioParameterFloat*> (apvts->getParameter ("decay"));
+    adsrParams[2] = dynamic_cast<juce::AudioParameterFloat*> (apvts->getParameter ("sustain"));
+    adsrParams[3] = dynamic_cast<juce::AudioParameterFloat*> (apvts->getParameter ("release"));
+    apvts->addParameterListener ("attack",  this);
+    apvts->addParameterListener ("decay",   this);
+    apvts->addParameterListener ("sustain", this);
+    apvts->addParameterListener ("release", this);
+
     // 加载噪声击打采样库（noise 目录下的瞬态采样）。
     loadNoiseSamples();
 
@@ -957,6 +969,47 @@ void OrganicChemistryAudioProcessor::setBellParams (const std::array<float, orga
         setBellParam (i, p[(size_t) i]);
 }
 
+void OrganicChemistryAudioProcessor::applyMolecularStateToAudio()
+{
+    // 从保存的分子拓扑重建分子（无界面加载工程时也能映射出音色）。
+    organic::Molecule mol;
+    {
+        const juce::ValueTree state = getMolecularState();
+        if (state.isValid() && state.hasType ("Molecule"))
+            mol.fromValueTree (state);
+    }
+
+    const auto descriptors = mol.computeDescriptors();
+    const auto smiles      = mol.canonicalSmiles();
+
+    // 分子波表（近正弦）。
+    setMoleculeWave (organic::buildNearSineWave (descriptors, smiles));
+
+    // ADSR 与分子解绑：映射前保存、映射后恢复。
+    const float envA = getBellParam ((int) organic::BellParamId::AmpAttack);
+    const float envD = getBellParam ((int) organic::BellParamId::AmpDecay);
+    const float envS = getBellParam ((int) organic::BellParamId::AmpSustain);
+    const float envR = getBellParam ((int) organic::BellParamId::AmpRelease);
+
+    const auto bellParams = organic::mapMoleculeToBellParams (descriptors, smiles);
+    setBellParams (bellParams);
+
+    setBellParam ((int) organic::BellParamId::AmpAttack,  envA);
+    setBellParam ((int) organic::BellParamId::AmpDecay,   envD);
+    setBellParam ((int) organic::BellParamId::AmpSustain, envS);
+    setBellParam ((int) organic::BellParamId::AmpRelease, envR);
+
+    // 用 SMILES 哈希选击打采样。
+    if (getNoiseSampleCount() > 0)
+        setNoiseSampleIndex ((int) (organic::hashSmiles (smiles) % (uint32_t) getNoiseSampleCount()));
+
+    // 画布无原子时静音。
+    setMoleculeEmpty (mol.heavyAtomCount() == 0);
+
+    // 波形/参数切换做一次弱 fade。
+    triggerFade();
+}
+
 void OrganicChemistryAudioProcessor::setMoleculeWave (const organic::WaveTable& table)
 {
     moleculeWave.fill (0.0f);
@@ -972,6 +1025,74 @@ float OrganicChemistryAudioProcessor::getMacro (int index) const noexcept
 void OrganicChemistryAudioProcessor::setMacro (int index, float value)
 {
     setBellParam ((int) organic::BellParamId::MacroWET + juce::jlimit (0, 3, index), value);
+}
+
+// ---------------------------------------------------------------------------
+//  ADSR 参数（宿主自动化 / CC / 持久化）
+// ---------------------------------------------------------------------------
+
+juce::AudioProcessorValueTreeState::ParameterLayout OrganicChemistryAudioProcessor::createParameterLayout()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "attack",  "Attack",  juce::NormalisableRange<float> (0.0005f, 0.5f, 0.0005f), 0.0005f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "decay",   "Decay",   juce::NormalisableRange<float> (0.01f,   6.0f, 0.01f),   1.1f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "sustain", "Sustain", juce::NormalisableRange<float> (0.0f,    1.0f, 0.01f),   0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        "release", "Release", juce::NormalisableRange<float> (0.01f,   8.0f, 0.01f),   2.6f));
+    return layout;
+}
+
+void OrganicChemistryAudioProcessor::parameterChanged (const juce::String& parameterID, float newValue)
+{
+    int bellId = -1;
+    if      (parameterID == "attack")  bellId = (int) organic::BellParamId::AmpAttack;
+    else if (parameterID == "decay")   bellId = (int) organic::BellParamId::AmpDecay;
+    else if (parameterID == "sustain") bellId = (int) organic::BellParamId::AmpSustain;
+    else if (parameterID == "release") bellId = (int) organic::BellParamId::AmpRelease;
+    else return;
+
+    setBellParam (bellId, newValue);
+    adsrDirty.store (true, std::memory_order_release);
+}
+
+void OrganicChemistryAudioProcessor::setAdsrParams (float attack, float decay, float sustain, float release)
+{
+    if (adsrParams[0] != nullptr) *adsrParams[0] = attack;
+    if (adsrParams[1] != nullptr) *adsrParams[1] = decay;
+    if (adsrParams[2] != nullptr) *adsrParams[2] = sustain;
+    if (adsrParams[3] != nullptr) *adsrParams[3] = release;
+}
+
+void OrganicChemistryAudioProcessor::handleMidiControlChanges (juce::MidiBuffer& midiMessages)
+{
+    if (adsrParams[0] == nullptr)
+        return;
+
+    for (const auto meta : midiMessages)
+    {
+        const auto msg = meta.getMessage();
+        if (! msg.isController())
+            continue;
+
+        const int cc = msg.getControllerNumber();
+        const float norm = static_cast<float> (msg.getControllerValue()) / 127.0f;
+
+        int idx = -1;
+        switch (cc)
+        {
+            case 20: idx = 0; break;   // Attack
+            case 21: idx = 1; break;   // Decay
+            case 22: idx = 2; break;   // Sustain
+            case 23: idx = 3; break;   // Release
+            default: break;
+        }
+
+        if (idx >= 0)
+            adsrParams[idx]->setValueNotifyingHost (norm);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1150,6 +1271,9 @@ void OrganicChemistryAudioProcessor::processBlock (juce::AudioBuffer<float>& buf
     const int numChannels = buffer.getNumChannels();
     if (numChannels == 0 || numSamples == 0)
         return;
+
+    // 处理 MIDI CC → ADSR 参数（宿主通过 CC 自动化控制）。
+    handleMidiControlChanges (midiMessages);
 
     // Bell 模式：走独立复刻音色链，完全脱离分子。
     processBellBlock (buffer, midiMessages);
@@ -1712,12 +1836,16 @@ void OrganicChemistryAudioProcessor::changeProgramName (int, const juce::String&
 
 void OrganicChemistryAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // 先取当前分子状态快照，再转 XML。
-    const juce::ValueTree tree = getMolecularState();
-    if (! tree.isValid())
-        return;
+    // 统一包装：根节点下挂 ADSR 参数树 + 分子拓扑，便于日后扩展。
+    juce::ValueTree root ("OrganicChemistryState");
+    if (apvts != nullptr)
+        root.appendChild (apvts->copyState(), nullptr);
 
-    if (auto xml = tree.createXml())
+    const juce::ValueTree mol = getMolecularState();
+    if (mol.isValid())
+        root.appendChild (mol.createCopy(), nullptr);
+
+    if (auto xml = root.createXml())
     {
         const juce::String xmlString = xml->toString();
         destData.append (xmlString.toRawUTF8(), xmlString.getNumBytesAsUTF8());
@@ -1733,12 +1861,36 @@ void OrganicChemistryAudioProcessor::setStateInformation (const void* data, int 
     if (xmlString.isEmpty())
         return;
 
-    if (auto xml = juce::XmlDocument::parse (xmlString))
+    auto xml = juce::XmlDocument::parse (xmlString);
+    if (xml == nullptr)
+        return;
+
+    const juce::ValueTree tree = juce::ValueTree::fromXml (*xml);
+    if (! tree.isValid())
+        return;
+
+    if (tree.hasType ("OrganicChemistryState"))
     {
-        const juce::ValueTree tree = juce::ValueTree::fromXml (*xml);
-        if (tree.isValid())
-            setMolecularState (tree);
+        // 新格式：分别恢复 ADSR 参数与分子拓扑。
+        if (apvts != nullptr)
+        {
+            const auto adsrChild = tree.getChildWithName (apvts->state.getType());
+            if (adsrChild.isValid())
+                apvts->replaceState (adsrChild);
+        }
+
+        const auto molChild = tree.getChildWithName ("Molecule");
+        if (molChild.isValid())
+            setMolecularState (molChild);
     }
+    else if (tree.hasType ("Molecule"))
+    {
+        // 旧格式（仅分子）：兼容早期保存的工程。
+        setMolecularState (tree);
+    }
+
+    // 重建分子 → 映射到音频，使宿主在未打开界面时也能直接出声。
+    applyMolecularStateToAudio();
 }
 
 // ---------------------------------------------------------------------------

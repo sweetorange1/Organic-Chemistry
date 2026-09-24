@@ -75,6 +75,15 @@ private:
     /** Step the preset selection by +1 / -1, wrapping at both ends. */
     void stepPreset (int delta);
 
+    /** 切回 MOLECULE 页签（若当前在 REACTION）。 */
+    void switchToMolecule();
+
+    /** 把 ADSR 重置为默认值。 */
+    void resetAdsrToDefault();
+
+    /** 右上角按钮文字：REACTION 下为 Reset，否则为 Clear。 */
+    juce::String clearButtonText() const;
+
     void paintInfoBar (juce::Graphics& g) const;
 
     /** 把当前分子重新映射到音频：波形始终跟随分子，效果参数仅在

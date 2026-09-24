@@ -10,7 +10,7 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`Organic Chemistry`（版本 `1.0.1`）
+- **产品名**：`Organic Chemistry`（版本 `1.1.0`）
 - **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。核心是一个复刻 Vital「BELL Reflections」预设的三正弦钟声引擎；用户在界面中"搭建分子"，分子的规范 SMILES 经确定性哈希映射到 Bell 引擎的 33 个参数——**分子即预设**。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
@@ -21,7 +21,7 @@
 
 ### 1.2 当前阶段与主要功能
 
-**已完成（v1.0.1）**：
+**已完成（v1.1.0）**：
 - 底部元素栏选择 C / O / N / S / P
 - 画布**按下拖拽放置原子**：按下显示虚影（ghost），松手才落子
 - 从一个原子**拖到另一个原子**成键连接（受价键约束，无法连接的不支持）
@@ -46,7 +46,10 @@
 - **钟形包络**：快起音 + 指数衰减 + 长释放，配 ENV2 调制包络（推动滤波截止）
 - **分子 → Bell 参数映射**：分子 SMILES 经确定性哈希映射到 **33** 个 Bell 参数 + 4 个宏（WET / BITCRUSH / DETUNE / ATTACK），
   非单调、确定但不可预测（**完整对照见 §1.5**）
-- **EnvelopePanel（未接线）**：ADSR 图形编辑器组件文件已写好，但尚未接入界面；当前 ADSR 完全跟随分子
+- **MOLECULE / REACTION 双页签 + ADSR 旋钮**：底部元素栏新增两个页签，切换到 REACTION 后元素色块动画过渡为 4 个 ADSR 旋钮（化学隐喻：Temperature→Attack、Pressure→Decay、Yield→Sustain、Mass→Release），支持拖拽 + 双击输入精确值
+- **ADSR 与分子解绑**：包络不再由分子映射驱动，改由 REACTION 页签旋钮独立控制（后续可接 EnvelopePanel 图形编辑器）
+- **ADSR 宿主自动化**：Attack / Decay / Sustain / Release 接入 `AudioProcessorValueTreeState`，支持宿主自动化、MIDI CC 与工程持久化
+- **EnvelopePanel（未接线）**：ADSR 图形编辑器组件文件已写好，但尚未接入界面
 - **波形预览**：右上角实时显示 osc_1 的分子波表（近正弦 + 少量 SMILES 哈希决定的谐波）
 - **Test 面板（v1.0.0 起屏蔽）**：33 个 Bell 参数按分类展示，`kTestPanelEnabled = false` 暂时隐藏
 - **自动更新检查 + 更新弹窗**：启动后延迟 5s 异步请求 `iisaacbeats.cn/api/update/check`（5s 超时、失败静默），仅有新版本时弹原生更新窗（`network/` + `ui/UpdateDialog`）
@@ -979,7 +982,7 @@ v0.11 引入键角后出现了两个新缺陷，根因是同一个：
 
 本机 CMake 4.3.3 + VS18 组合下，**"Visual Studio 18 2026" generator 会在配置阶段 Access violation**，必须用 Ninja。
 
-**⚠️ `Enter-VsDevShell` 已不可用**（见 §8.3）。改为直接设置工具链环境变量。以下是在 Git Bash 中的可用流程：
+**⚠️ `Enter-VsDevShell` 需先清掉 `http_proxy` 环境变量**（否则报字典冲突，见 §8.4）。**AI 自动构建走 PowerShell + `Enter-VsDevShell`（见 §8.2）**；手工 Git Bash 构建则直接设置工具链环境变量，流程如下：
 
 ```bash
 VS="/c/Program Files/Microsoft Visual Studio/18/Professional"
@@ -1008,7 +1011,36 @@ export PATH="$MSVC/bin/Hostx64/x64:$SDK/bin/$SDKV/x64:$PATH"
 
 同样逻辑的 PowerShell 版本在 [`build.ps1`](/I:/Organic%20Chemistry/build.ps1)（自动探测最新 MSVC / SDK 版本）。注意本机 PowerShell 执行策略默认禁止运行 .ps1，需 `-ExecutionPolicy Bypass` 或把内容内联执行。
 
-### 8.2 产物
+### 8.2 AI 自动构建流程（PowerShell / Enter-VsDevShell）
+
+AI 每次改动代码后的标准增量构建流程。与 §8.1 的手工 Git Bash 流程不同：此流程在 PowerShell 中用 VS 官方 DevShell 模块加载 MSVC 环境，全程无需手写 `INCLUDE` / `LIB` / `PATH`，可自动化。步骤如下：
+
+1. **结束占用产物的进程**（避免 `LNK1104 无法打开文件`——Standalone 实例仍占用着 exe）：
+   ```powershell
+   Get-Process -Name 'Organic Chemistry' -ErrorAction SilentlyContinue | Stop-Process -Force
+   ```
+
+2. **加载 MSVC 工具链环境**（VS 官方 PowerShell 模块）：
+   ```powershell
+   Import-Module 'C:/Program Files/Microsoft Visual Studio/18/Professional/Common7/Tools/Microsoft.VisualStudio.DevShell.dll'
+   Enter-VsDevShell -VsInstallPath 'C:/Program Files/Microsoft Visual Studio/18/Professional' -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+   ```
+
+3. **（仅当 `CMakeLists.txt` / 源文件列表变更时）重新配置**：
+   ```powershell
+   cmake -S 'i:/Organic Chemistry' -B 'i:/Organic Chemistry/cmake-build-ninja' -DORGANIC_COPY_PLUGIN_AFTER_BUILD=OFF
+   ```
+
+4. **增量编译目标**（Standalone + VST3）：
+   ```powershell
+   cmake --build 'i:/Organic Chemistry/cmake-build-ninja' --target OrganicChemistry_Standalone OrganicChemistry_VST3 -j 4
+   ```
+
+5. **判定结果**：`$LASTEXITCODE -eq 0` 即成功；失败则回读构建日志尾部定位。常见 `LNK1104` 回到第 1 步结束进程后重试即可。
+
+> 此流程已沉淀为用户级 skill `juce-windows-cmake-build`（本地 `aiskill/juce-windows-cmake-build/SKILL.md`，已加入 `.gitignore` 不入库），覆盖 Access violation、FetchContent 拉取 JUCE 卡住、`createPluginFilter` 缺失等常见构建故障的自动处理。
+
+### 8.3 产物
 
 ```
 cmake-build-ninja\OrganicChemistry_artefacts\Release\
@@ -1018,7 +1050,7 @@ cmake-build-ninja\OrganicChemistry_artefacts\Release\
 
 `COPY_PLUGIN_AFTER_BUILD TRUE` 会自动把 VST3 拷到系统插件目录。
 
-### 8.3 已知构建坑
+### 8.4 已知构建坑
 
 | 现象 | 原因 | 解法 |
 | --- | --- | --- |
@@ -1109,7 +1141,7 @@ osc_1 波形是近正弦（不是旧的任意波形）：
 | --- | --- |
 | `BellEngine.h/.cpp` | `BellVoice`（三正弦 + 包络 + 滤波 + 噪声击打）+ `BellPatch` + `mapMoleculeToBellParams()` + `buildNearSineWave()` + `BellParamId`/`bellParamDef()` |
 | `BellWave.h` | osc_1 默认波表常量 `kOsc1Wave` |
-| `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（组件已写好，尚未接线/编译） |
+| `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（手动锁定段） |
 | `PluginProcessor.h/.cpp` | `processBellBlock()`（效果链）+ Bell 参数原子数组 + 噪声采样库 + 状态持久化 |
 | `PluginEditor.cpp` | `applyMoleculeToAudio()`：分子 → Bell 参数 + osc_1 波表 + 采样 |
 | `TestPanel.h/.cpp` | 33 个 Bell 参数调试面板（v1.0.0 起屏蔽） |
@@ -1175,6 +1207,7 @@ v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」�
 
 | 版本 | 内容 |
 | --- | --- |
+| **1.1.0** | **ADSR 控制器 + 反应页签。** ① 底部元素栏新增 MOLECULE / REACTION 页签，切到 REACTION 后元素色块动画过渡为 4 个 ADSR 旋钮（化学隐喻包装：Temperature→Attack、Pressure→Decay、Yield→Sustain、Mass→Release），支持拖拽 + 双击输入精确值。② ADSR 与分子映射解绑，包络不再随分子结构变化。③ ADSR 参数接入 `AudioProcessorValueTreeState`，支持宿主自动化 / MIDI CC / 工程持久化（新状态格式兼容旧工程）。④ 修复分子模式画布被页签白条遮挡、右上角 Clear/Reset 文案需悬停才刷新两个问题 |
 | **1.0.1** | **bug 修复：修复高音高（E9 及以上）触发 NaN 崩溃。** 根因是滤波 keytrack 把截止频率推到 Nyquist 以上，TPT 滤波器 tan() 溢出为 Inf/NaN 并永久污染状态，导致电流声后整机静音。修复：钳制截止频率到 [20, 0.45×sr]，输出端加 NaN 兜底并重置滤波器；BellTests 新增高音高回归测试 |
 | **1.0.0** | **第一个正式版本。** 版本号从 0.9.0 升到 1.0.0；暂时屏蔽 Test 调试面板按钮；含自动更新检查 + 更新弹窗、每日匿名遥测、README/LICENSE/FUNDING/安装器脚本，Bell 音色复刻作为起点音色 |
 | 0.1.0 | 纯白界面 + 左上角官网链接 |
@@ -1227,6 +1260,50 @@ cutoffHz = filterCutoff × 2^(keytrackCents/12) × 2^(env2ToFilter·env2·4/12)
 | --- | --- |
 | `BellEngine.cpp` | `updateFilter` 截止频率钳制；`renderNextBlock` 输出 NaN 兜底 + 滤波器重置 |
 | `BellTests.cpp` | 新增高音高 NaN 检测与整机恢复回归测试 |
+
+---
+
+## 13. 本次开发记录（v1.1.0）
+
+> 本轮把「ADSR 包络」从分子映射中解绑，做成独立可调的控制器，并给底部元素栏加上 MOLECULE / REACTION 双页签与旋钮切换动画。
+
+### 13.1 页签与白条修复
+- 底部元素栏新增 **MOLECULE / REACTION** 两个页签（位于元素行上方 20 设计像素的横向条）。
+- 元素栏总高从 78 → 92 设计像素（72 元素/旋钮行 + 20 页签条），`kBottomBarHeight` / `kChipRowHeight` 常量化。
+- **修复白条遮挡**：MOLECULE 模式下分子编辑区最下方被页签白条遮挡。画布底部向下延伸 20 设计像素（随展开动画平滑归零），盖住页签条；`ElementBar::hitTest` 只拦截页签与元素行，其余区域透传给画布。
+- **修复 Clear/Reset 文案**：右上角按钮文案在切换页签时需悬停才刷新。在 `onToggleExpanded` 回调与 `switchToMolecule()` 里补 `repaint()`。
+
+### 13.2 ADSR 解绑
+- `BellEngine.cpp::mapMoleculeToBellParams()` 删除 AmpAttack / AmpDecay / AmpSustain / AmpRelease 四条映射，包络回到默认钟形包络（Attack 0.5ms / Decay 1.1s / Sustain 0 / Release 2.6s）。
+- `PluginEditor.cpp::applyMoleculeToAudio()` 在批量写入前后保存 / 恢复包络值，分子变化不再覆盖 ADSR。
+
+### 13.3 ADSR 旋钮（化学隐喻）
+- REACTION 页签下元素色块动画过渡为 4 个旋钮，顺序与化学隐喻固定：
+  - **Temperature（温度）→ Attack**：温度越高引发越剧烈，音头越强（attack 越短）
+  - **Pressure（压强）→ Decay**：压强越高弛豫越快（decay 越短）
+  - **Yield（产率）→ Sustain**：产率越高中间体越稳定（sustain 越高）
+  - **Mass（质量）→ Release**：质量越大惯性越大（release 越长）
+- 旋钮支持上下拖拽（attack/decay/release 走对数时间轴）与**双击输入精确值**（ms / %），输入框用自定义 `LookAndFeel` 白底细描边样式。
+- `knobAnim` 进度驱动「元素色块 ↔ 旋钮」的淡入淡出过渡；`onEnvelopeChanged` 回调把旋钮值写回 `setAdsrParams()`。
+
+### 13.4 APVTS / 宿主自动化 / 持久化
+- 新增 `AudioProcessorValueTreeState`，暴露 Attack / Decay / Sustain / Release 四个参数。
+- `setAdsrParams()` 供 UI 写入并通知宿主；`parameterChanged()` 接收宿主自动化回调（置 `adsrDirty` 供编辑器消费）；`handleMidiControlChanges()` 处理 MIDI CC。
+- 工程持久化升级：`getStateInformation` 输出新根节点 `OrganicChemistryState`（挂 ADSR 参数树 + 分子拓扑），`setStateInformation` 兼容旧格式（纯 `Molecule` 节点），并新增 `applyMolecularStateToAudio()` 使宿主未打开界面时加载工程也能直接出声。
+
+### 13.5 其它
+- `EnvelopePanel.h/.cpp`：ADSR 图形编辑器组件（峰值 ‡ 过渡态记号、手动锁定段光环），文件已写好但尚未接入界面。
+- `MoleculeCanvas`：分子名 / 分子式贴近画布底边（padding 16 → 6）；新增 `onPointerDown` 回调，点击画布时提交旋钮输入框。
+
+### 13.6 涉及文件
+| 文件 | 改动 |
+| --- | --- |
+| `ElementBar.h/.cpp` | MOLECULE/REACTION 页签 + 4 旋钮（拖拽/双击输入）+ 包络曲线绘制 + 切换动画 + hitTest 透传 |
+| `PluginEditor.cpp/.h` | 页签切换重排 + 白条遮挡修复 + Clear/Reset 文案刷新 + `switchToMolecule` / `resetAdsrToDefault` / `clearButtonText` |
+| `PluginProcessor.cpp/.h` | APVTS 集成 + `setAdsrParams` / `parameterChanged` / `consumeAdsrDirty` + MIDI CC + 状态持久化升级 + `applyMolecularStateToAudio` |
+| `BellEngine.cpp` | ADSR 与分子解绑 |
+| `MoleculeCanvas.cpp/.h` | 分子名贴底边 + `onPointerDown` |
+| `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（新增，未接线） |
 
 ---
 

@@ -1,5 +1,5 @@
 #define MyAppName "Organic Chemistry"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "iisaacbeats.cn"
 #define MyPluginBundle "Organic Chemistry.vst3"
 

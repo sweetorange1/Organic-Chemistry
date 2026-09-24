@@ -21,7 +21,8 @@ constexpr float kVersionFontSize = 11.5f;
 constexpr float kVersionMarginX  = 8.0f;
 
 constexpr float kTopBarHeight    = 46.0f;
-constexpr float kBottomBarHeight = 78.0f;
+constexpr float kBottomBarHeight = 92.0f;   // 元素栏总高：72 元素/旋钮行 + 20 页签条
+constexpr float kChipRowHeight   = 72.0f;   // 元素/旋钮行高度（色块与旋钮共用，保持分界线一致）
 
 constexpr float kFormulaFontSize = 17.0f;
 constexpr float kDetailFontSize  = 11.5f;
@@ -60,6 +61,19 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
         canvas.repaint();
     };
 
+    // 反应剖面页签：展开/收起时重排布局，并刷新顶部按钮文案（Clear/Reset）。
+    elementBar.onToggleExpanded = [this]
+    {
+        resized();
+        repaint();
+    };
+
+    // ADSR 旋钮：调节包络 → 写入参数树（通知宿主 + 同步音频引擎）。
+    elementBar.onEnvelopeChanged = [this] (float attack, float decay, float sustain, float release)
+    {
+        processor.setAdsrParams (attack, decay, sustain, release);
+    };
+
     canvas.onMoleculeChanged = [this]
     {
         // 用户手动改动分子后，抬头不再对应任何预设。
@@ -76,6 +90,9 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
 
     // 波形预览：显示当前分子 wavetable（静态单周期波形）。
     canvas.previewWaveProvider = [this] { return processor.getPreviewWave(); };
+
+    // 点击画布时提交正在进行的旋钮输入框。
+    canvas.onPointerDown = [this] { elementBar.commitKnobEdit(); };
 
     // 测试面板：拖动滑杆 → 手动覆盖该参数；Reset 恢复全自动。
     testPanel.onParamChanged = [this] (int index, float value)
@@ -156,28 +173,17 @@ float OrganicChemistryAudioProcessorEditor::uiScale() const
 void OrganicChemistryAudioProcessorEditor::applyMoleculeToAudio()
 {
     const auto& mol = canvas.getMolecule();
-    const auto descriptors = mol.computeDescriptors();
-    const auto smiles = mol.canonicalSmiles();
 
-    // 分子波表（近正弦：基频 + 少量 SMILES 哈希决定的谐波）。
-    processor.setMoleculeWave (organic::buildNearSineWave (descriptors, smiles));
-
-    // 分子 → Bell 参数（非单调、确定但不可预测，落在好音色共性范围内）。
-    processor.setBellParams (organic::mapMoleculeToBellParams (descriptors, smiles));
-
-    // 用 SMILES 哈希从采样库选一个击打采样（确定性、不可预测）。
-    if (processor.getNoiseSampleCount() > 0)
-        processor.setNoiseSampleIndex ((int) (organic::hashSmiles (smiles)
-                                              % (uint32_t) processor.getNoiseSampleCount()));
-
-    // 画布上没有原子时静音。
-    processor.setMoleculeEmpty (mol.heavyAtomCount() == 0);
-
-    // 保存分子拓扑，供 DAW 工程持久化。
+    // 保存分子拓扑 + 映射到音频（处理器侧：波形 / Bell 参数 / 采样 / 静音）。
     processor.setMolecularState (mol.toValueTree());
+    processor.applyMolecularStateToAudio();
 
-    // 波形/参数切换，做一次弱 fade 消除电流声。
-    processor.triggerFade();
+    // 刷新反应剖面（ADSR）显示（ADSR 与分子解绑，读取处理器当前包络）。
+    elementBar.setEnvelopeValues (
+        processor.getBellParam ((int) organic::BellParamId::AmpAttack),
+        processor.getBellParam ((int) organic::BellParamId::AmpDecay),
+        processor.getBellParam ((int) organic::BellParamId::AmpSustain),
+        processor.getBellParam ((int) organic::BellParamId::AmpRelease));
 }
 
 // ---------------------------------------------------------------------------
@@ -188,8 +194,20 @@ void OrganicChemistryAudioProcessorEditor::timerCallback()
 {
     constexpr float dt = 1.0f;   // one frame
 
+    // 宿主自动化 / MIDI CC 改变 ADSR 时，刷新旋钮与反应剖面图。
+    if (processor.consumeAdsrDirty())
+    {
+        elementBar.setEnvelopeValues (
+            processor.getBellParam ((int) organic::BellParamId::AmpAttack),
+            processor.getBellParam ((int) organic::BellParamId::AmpDecay),
+            processor.getBellParam ((int) organic::BellParamId::AmpSustain),
+            processor.getBellParam ((int) organic::BellParamId::AmpRelease));
+    }
+
     canvas.advanceAnimation (dt);
-    elementBar.advanceAnimation (dt);
+    // 展开/收起动画进行中时，每帧重排布局让高度平滑过渡。
+    if (elementBar.advanceAnimation (dt))
+        resized();
 }
 
 // ---------------------------------------------------------------------------
@@ -248,13 +266,12 @@ void OrganicChemistryAudioProcessorEditor::paint (juce::Graphics& g)
 
     paintInfoBar (g);
 
-    // Hairline separators.
+    // Hairline separator：仅顶部信息栏底部。
+    // （底部栏顶部的横线已按要求移除，MOLECULE/REACTION tab 上方不再有分隔线。）
     const float topY = kTopBarHeight * s;
-    const float bottomY = (float) getHeight() - kBottomBarHeight * s;
 
     g.setColour (juce::Colour (0xFFEDEDE8));
     g.drawLine (0.0f, topY, (float) getWidth(), topY, 1.0f * s);
-    g.drawLine (0.0f, bottomY, (float) getWidth(), bottomY, 1.0f * s);
 }
 
 void OrganicChemistryAudioProcessorEditor::paintInfoBar (juce::Graphics& g) const
@@ -319,15 +336,18 @@ void OrganicChemistryAudioProcessorEditor::paintInfoBar (juce::Graphics& g) cons
                     juce::Rectangle<int> (nextBounds.getRight() + (int) (10.0f * s),
                                           0, (int) (120.0f * s), barHeight),
                     juce::Justification::centredLeft, false);
+    }
 
-        // Clear button, top right.
+    // 右上角按钮：REACTION 下为 Reset（重置 ADSR），否则为 Clear（清空分子）。
+    if (elementBar.isExpanded() || hasMolecule)
+    {
         const auto cb = getClearButtonBounds();
         const auto colour = isClearHovered ? juce::Colour (0xFF666660)
                                           : juce::Colour (0xFFB0B0AA);
 
         g.setColour (colour);
         g.setFont (juce::Font (juce::FontOptions (kClearFontSize * s)));
-        g.drawText (kClearText, cb, juce::Justification::centred, false);
+        g.drawText (clearButtonText(), cb, juce::Justification::centred, false);
 
         if (isClearHovered)
             g.drawLine ((float) cb.getX() + 2.0f * s,     (float) cb.getBottom() - 3.0f * s,
@@ -436,6 +456,31 @@ void OrganicChemistryAudioProcessorEditor::stepPreset (int delta)
     applyPreset (currentPreset + delta);
 }
 
+void OrganicChemistryAudioProcessorEditor::switchToMolecule()
+{
+    if (elementBar.isExpanded())
+    {
+        elementBar.setExpanded (false);
+        resized();
+        repaint();   // 刷新右上角按钮文案（Reset → Clear）
+    }
+}
+
+void OrganicChemistryAudioProcessorEditor::resetAdsrToDefault()
+{
+    const auto def = organic::defaultBellParams();
+    processor.setAdsrParams (
+        def[(size_t) organic::BellParamId::AmpAttack],
+        def[(size_t) organic::BellParamId::AmpDecay],
+        def[(size_t) organic::BellParamId::AmpSustain],
+        def[(size_t) organic::BellParamId::AmpRelease]);
+}
+
+juce::String OrganicChemistryAudioProcessorEditor::clearButtonText() const
+{
+    return elementBar.isExpanded() ? "Reset" : "Clear";
+}
+
 void OrganicChemistryAudioProcessorEditor::resized()
 {
     const float s = uiScale();
@@ -447,10 +492,22 @@ void OrganicChemistryAudioProcessorEditor::resized()
 
     auto area = getLocalBounds();
     area.removeFromTop ((int) (kTopBarHeight * s));
-    elementBar.setBounds (area.removeFromBottom ((int) (kBottomBarHeight * s)));
 
-    // 测试面板：展开时占据画布顶部一段区域，收起时不可见。
-    if (testPanelVisible)
+    // 展开动画：元素栏高度从底部条平滑过渡到占满整个编辑区。
+    const int bottomH = (int) (kBottomBarHeight * s);
+    const int fullH   = area.getHeight();
+    const int barH    = bottomH + (int) ((fullH - bottomH) * elementBar.getExpandAnim());
+
+    elementBar.setBounds (area.removeFromBottom (barH));
+
+    // 收起（MOLECULE 模式）时画布向下多延伸「页签条」的高度（20 设计像素），
+    // 盖住页签条所在的横向区域，使分子编辑区不被白条占位；展开动画期间该
+    // 重叠量随 expandAnim 平滑归零。
+    const int overlap = (int) ((kBottomBarHeight - kChipRowHeight) * s
+                               * (1.0f - elementBar.getExpandAnim()));
+
+    // 测试面板：仅在收起且可见时占据画布顶部。
+    if (testPanelVisible && ! elementBar.isExpanded())
     {
         const int panelH = (int) (170.0f * s);
         testPanel.setBounds (area.removeFromTop (panelH));
@@ -460,7 +517,10 @@ void OrganicChemistryAudioProcessorEditor::resized()
         testPanel.setBounds (juce::Rectangle<int> ());
     }
 
-    canvas.setBounds (area);
+    // 画布底部额外向下延伸 overlap，覆盖元素栏透明的页签条（元素栏绘制在
+    // 其上方，命中测试仍只拦截页签与色块行，其余透传给画布）。
+    canvas.setBounds (area.getX(), area.getY(), area.getWidth(),
+                      area.getHeight() + overlap);
 
     if (presetMenuVisible)
     {
@@ -495,7 +555,7 @@ juce::Rectangle<int> OrganicChemistryAudioProcessorEditor::getClearButtonBounds(
 {
     const float s = uiScale();
     const juce::Font font { juce::FontOptions (kClearFontSize * s) };
-    const int w = font.getStringWidth (kClearText) + (int) (16.0f * s);
+    const int w = font.getStringWidth (clearButtonText()) + (int) (16.0f * s);
 
     return juce::Rectangle<int> (getWidth() - w - (int) (14.0f * s),
                                  (int) (12.0f * s),
@@ -519,6 +579,9 @@ juce::Rectangle<int> OrganicChemistryAudioProcessorEditor::getTestButtonBounds()
 
 void OrganicChemistryAudioProcessorEditor::mouseDown (const juce::MouseEvent& event)
 {
+    // 点击编辑器空白区时，提交正在进行的旋钮输入。
+    elementBar.commitKnobEdit();
+
     if (kTestPanelEnabled && getTestButtonBounds().contains (event.getPosition()))
     {
         testPanelVisible = ! testPanelVisible;
@@ -535,20 +598,24 @@ void OrganicChemistryAudioProcessorEditor::mouseDown (const juce::MouseEvent& ev
     }
 
     // Preset picker: arrows step, the formula itself drops the list.
+    // 切到预设时自动回到 MOLECULE 页签。
     if (getPrevPresetBounds().contains (event.getPosition()))
     {
+        switchToMolecule();
         stepPreset (-1);
         return;
     }
 
     if (getNextPresetBounds().contains (event.getPosition()))
     {
+        switchToMolecule();
         stepPreset (1);
         return;
     }
 
     if (getFormulaBounds().contains (event.getPosition()))
     {
+        switchToMolecule();
         if (presetMenuVisible)
             hidePresetMenu();
         else
@@ -556,10 +623,14 @@ void OrganicChemistryAudioProcessorEditor::mouseDown (const juce::MouseEvent& ev
         return;
     }
 
-    if (canvas.getMolecule().heavyAtomCount() > 0
+    // 右上角按钮：REACTION 下重置 ADSR，否则清空分子。
+    if ((elementBar.isExpanded() || canvas.getMolecule().heavyAtomCount() > 0)
         && getClearButtonBounds().contains (event.getPosition()))
     {
-        canvas.clearMolecule();
+        if (elementBar.isExpanded())
+            resetAdsrToDefault();
+        else
+            canvas.clearMolecule();
         repaint();
     }
 }
@@ -567,7 +638,7 @@ void OrganicChemistryAudioProcessorEditor::mouseDown (const juce::MouseEvent& ev
 void OrganicChemistryAudioProcessorEditor::mouseMove (const juce::MouseEvent& event)
 {
     const bool websiteHovered = getWebsiteBounds().contains (event.getPosition());
-    const bool clearHovered   = canvas.getMolecule().heavyAtomCount() > 0
+    const bool clearHovered   = (elementBar.isExpanded() || canvas.getMolecule().heavyAtomCount() > 0)
                                 && getClearButtonBounds().contains (event.getPosition());
     const bool testHovered    = kTestPanelEnabled && getTestButtonBounds().contains (event.getPosition());
     const bool formulaHovered = getFormulaBounds().contains (event.getPosition());

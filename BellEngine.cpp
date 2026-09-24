@@ -53,11 +53,9 @@ std::array<float, kNumBellParams> mapMoleculeToBellParams (
     const char* bytes = smiles.toRawUTF8();
     XorShift rng (fnv1aHash (bytes, (size_t) smiles.getNumBytesAsUTF8()));
 
-    // --- 包络：瞬态拨弦（共性规律，sustain 固定 0）---
-    p[(size_t) BellParamId::AmpAttack]  = 0.0005f + rng.nextFloat() * 0.015f;   // 0.5ms ~ 15ms
-    p[(size_t) BellParamId::AmpSustain] = 0.0f;
-    p[(size_t) BellParamId::AmpDecay]   = 0.8f + rng.nextFloat() * 2.5f;        // 0.8 ~ 3.3s
-    p[(size_t) BellParamId::AmpRelease] = 0.6f + rng.nextFloat() * 2.0f;        // 0.6 ~ 2.6s
+    // --- 包络（ADSR）与分子解绑 ---
+    // ADSR 不再由分子映射驱动，保持默认钟形包络（Attack 0.5ms / Decay 1.1s /
+    // Sustain 0 / Release 2.6s），后续由独立的 ADSR 控制器接管。
 
     // --- 声源：三个正弦层 ---
     p[(size_t) BellParamId::Osc1Level]     = 0.65f + rng.nextFloat() * 0.2f;    // 基频

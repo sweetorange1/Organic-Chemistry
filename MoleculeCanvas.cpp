@@ -305,7 +305,7 @@ void MoleculeCanvas::paintStructuralFormula (juce::Graphics& g) const
     const auto name = molecule.commonName();
     const auto area = getLocalBounds().toFloat();
 
-    const float pad = 16.0f * uiScale;
+    const float pad = 6.0f * uiScale;   // 分子名/分子式贴近画布底边（下方 tab 栏无分隔线）
     const float labelSize = 9.5f * uiScale;
     const float valueSize = 14.0f * uiScale;
     const float nameSize = 16.0f * uiScale;
@@ -472,6 +472,9 @@ void MoleculeCanvas::paintWavePreview (juce::Graphics& g) const
 
 void MoleculeCanvas::mouseDown (const juce::MouseEvent& e)
 {
+    if (onPointerDown != nullptr)
+        onPointerDown();
+
     const auto screenPos = e.position;
     const auto modelPos = screenToModel (screenPos);
     const float s = drawScale();

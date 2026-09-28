@@ -10,7 +10,7 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`Organic Chemistry`（版本 `1.1.0`）
+- **产品名**：`Organic Chemistry`（版本 `1.1.1`）
 - **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。核心是一个复刻 Vital「BELL Reflections」预设的三正弦钟声引擎；用户在界面中"搭建分子"，分子的规范 SMILES 经确定性哈希映射到 Bell 引擎的 33 个参数——**分子即预设**。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
@@ -21,7 +21,7 @@
 
 ### 1.2 当前阶段与主要功能
 
-**已完成（v1.1.0）**：
+**已完成（v1.1.1）**：
 - 底部元素栏选择 C / O / N / S / P
 - 画布**按下拖拽放置原子**：按下显示虚影（ghost），松手才落子
 - 从一个原子**拖到另一个原子**成键连接（受价键约束，无法连接的不支持）
@@ -1207,6 +1207,7 @@ v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」�
 
 | 版本 | 内容 |
 | --- | --- |
+| **1.1.1** | **bug 修复：修复 Yield（Sustain）旋钮 100% 时延音消失。** 根因是 `BellVoice` 包络状态机缺失 sustain 态：sustain=1.0 时 decay 首帧即达平台并立即转入 release，延音平台不存在。修复：恢复 `EnvState::sustain`，decay 到达 sustain 后停住、note-off 才 release；sustain=0 时保持原钟声行为 |
 | **1.1.0** | **ADSR 控制器 + 反应页签。** ① 底部元素栏新增 MOLECULE / REACTION 页签，切到 REACTION 后元素色块动画过渡为 4 个 ADSR 旋钮（化学隐喻包装：Temperature→Attack、Pressure→Decay、Yield→Sustain、Mass→Release），支持拖拽 + 双击输入精确值。② ADSR 与分子映射解绑，包络不再随分子结构变化。③ ADSR 参数接入 `AudioProcessorValueTreeState`，支持宿主自动化 / MIDI CC / 工程持久化（新状态格式兼容旧工程）。④ 修复分子模式画布被页签白条遮挡、右上角 Clear/Reset 文案需悬停才刷新两个问题 |
 | **1.0.1** | **bug 修复：修复高音高（E9 及以上）触发 NaN 崩溃。** 根因是滤波 keytrack 把截止频率推到 Nyquist 以上，TPT 滤波器 tan() 溢出为 Inf/NaN 并永久污染状态，导致电流声后整机静音。修复：钳制截止频率到 [20, 0.45×sr]，输出端加 NaN 兜底并重置滤波器；BellTests 新增高音高回归测试 |
 | **1.0.0** | **第一个正式版本。** 版本号从 0.9.0 升到 1.0.0；暂时屏蔽 Test 调试面板按钮；含自动更新检查 + 更新弹窗、每日匿名遥测、README/LICENSE/FUNDING/安装器脚本，Bell 音色复刻作为起点音色 |
@@ -1263,7 +1264,7 @@ cutoffHz = filterCutoff × 2^(keytrackCents/12) × 2^(env2ToFilter·env2·4/12)
 
 ---
 
-## 13. 本次开发记录（v1.1.0）
+## 13. 本次开发记录（v1.1.1）
 
 > 本轮把「ADSR 包络」从分子映射中解绑，做成独立可调的控制器，并给底部元素栏加上 MOLECULE / REACTION 双页签与旋钮切换动画。
 

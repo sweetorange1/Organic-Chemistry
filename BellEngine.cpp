@@ -350,7 +350,21 @@ void BellVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                 break;
             case EnvState::decay:
                 env = patch.ampSustain + (1.0f - patch.ampSustain) * std::exp (-envSamples / decayTau);
-                if (env <= patch.ampSustain + 0.0001f) { env = patch.ampSustain; envReleaseFrom = env; envState = EnvState::release; envSamples = 0; }
+                if (env <= patch.ampSustain + 0.0001f)
+                {
+                    env = patch.ampSustain;
+                    if (patch.ampSustain > 0.0001f)
+                        envState = EnvState::sustain;    // 有平台：停住，等 note-off
+                    else
+                    {
+                        envReleaseFrom = 0.0f;           // 无平台（钟声）：衰减到 0 直接释放
+                        envState = EnvState::release;
+                    }
+                    envSamples = 0;
+                }
+                break;
+            case EnvState::sustain:
+                env += (patch.ampSustain - env) * 0.0005f;   // 平台跟随 sustain 参数缓慢移动
                 break;
             case EnvState::release:
                 env = envReleaseFrom * std::exp (-envSamples / releaseTau);

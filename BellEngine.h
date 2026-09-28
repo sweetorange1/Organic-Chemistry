@@ -484,7 +484,7 @@ private:
     double baseFreqHz = 261.63;
     double detuneLfoPhase = 0.0;
 
-    enum class EnvState { attack, decay, release };
+    enum class EnvState { attack, decay, sustain, release };
     EnvState envState = EnvState::release;
     EnvState env2State = EnvState::release;
     float env = 0.0f;

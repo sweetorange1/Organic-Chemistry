@@ -107,6 +107,21 @@ private:
     juce::ComponentBoundsConstrainer constrainer;
     std::unique_ptr<juce::ResizableCornerComponent> resizer;
 
+    // 顶栏底部分隔线：独立顶层组件。若由 Editor::paint 直接绘制，展开
+    // REACTION 面板时会被 ElementBar 的 fillAll(white) 盖掉线的一半，
+    // 看起来变淡变细；独立组件始终绘制在最上层，不受面板填充遮挡。
+    class TopHairline final : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (juce::Colour (0xFFEDEDE8));
+            g.fillRect (getLocalBounds());
+        }
+    };
+
+    TopHairline topHairline;
+
     bool isWebsiteHovered = false;
     bool isClearHovered   = false;
     bool isTestHovered    = false;

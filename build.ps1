@@ -11,7 +11,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$projectDir = "I:\Organic Chemistry"
+$projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildDir   = Join-Path $projectDir "cmake-build-ninja"
 $juceSrc    = Join-Path $projectDir "cmake-build-release-visual-studio\_deps\juce-src"
 $cmake      = "C:\Program Files\CMake\bin\cmake.exe"
@@ -71,7 +71,8 @@ $configureArgs = @(
     "-DCMAKE_BUILD_TYPE=Release",
     "-DCMAKE_C_COMPILER=cl",
     "-DCMAKE_CXX_COMPILER=cl",
-    "-DFETCHCONTENT_SOURCE_DIR_JUCE=$juceSrc"
+    "-DFETCHCONTENT_SOURCE_DIR_JUCE=$juceSrc",
+    "-DORGANIC_COPY_PLUGIN_AFTER_BUILD=OFF"
 )
 
 & $cmake @configureArgs > build.log 2>&1

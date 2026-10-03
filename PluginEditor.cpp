@@ -47,6 +47,7 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
     addAndMakeVisible (elementBar);
     addChildComponent (testPanel);   // 初始隐藏，点 Test 后展开
     addChildComponent (presetMenu);  // 初始隐藏，点分子式后展开
+    addAndMakeVisible (topHairline); // 顶栏底部分隔线（必须晚于 elementBar 添加）
 
     presetMenu.onChosen = [this] (int index)
     {
@@ -140,7 +141,12 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
     resizer = std::make_unique<juce::ResizableCornerComponent> (this, &constrainer);
     addAndMakeVisible (*resizer);
 
-    setSize (kDesignWidth, kDesignHeight);
+    // 恢复工程里保存的窗口宽度（宿主不会记录插件主动改动的窗口大小），
+    // 高度按固定宽高比换算，与 constrainer 的 50%~200% 限制一致。
+    const int savedWidth = juce::jlimit (kDesignWidth / 2, kDesignWidth * 2,
+                                         processor.editorWidth.load());
+    setSize (savedWidth,
+             juce::roundToInt ((float) savedWidth * (float) kDesignHeight / (float) kDesignWidth));
 
     startTimerHz (60);
 
@@ -193,6 +199,15 @@ void OrganicChemistryAudioProcessorEditor::applyMoleculeToAudio()
 void OrganicChemistryAudioProcessorEditor::timerCallback()
 {
     constexpr float dt = 1.0f;   // one frame
+
+    // 宿主若在编辑器创建后用自己记忆的大小异步覆盖窗口（onSize 晚到），
+    // 每帧把窗口拉回工程保存的宽度，保证重开界面时大小不被重置。
+    const int savedWidth = processor.editorWidth.load();
+    if (savedWidth != getWidth())
+    {
+        setSize (savedWidth,
+                 juce::roundToInt ((float) savedWidth * (float) kDesignHeight / (float) kDesignWidth));
+    }
 
     // 宿主自动化 / MIDI CC 改变 ADSR 时，刷新旋钮与反应剖面图。
     if (processor.consumeAdsrDirty())
@@ -266,12 +281,9 @@ void OrganicChemistryAudioProcessorEditor::paint (juce::Graphics& g)
 
     paintInfoBar (g);
 
-    // Hairline separator：仅顶部信息栏底部。
+    // 顶栏底部分隔线改由独立顶层组件 topHairline 绘制（见 resized），
+    // 避免展开 REACTION 面板时被 ElementBar 的白色填充盖住半条线。
     // （底部栏顶部的横线已按要求移除，MOLECULE/REACTION tab 上方不再有分隔线。）
-    const float topY = kTopBarHeight * s;
-
-    g.setColour (juce::Colour (0xFFEDEDE8));
-    g.drawLine (0.0f, topY, (float) getWidth(), topY, 1.0f * s);
 }
 
 void OrganicChemistryAudioProcessorEditor::paintInfoBar (juce::Graphics& g) const
@@ -483,6 +495,11 @@ juce::String OrganicChemistryAudioProcessorEditor::clearButtonText() const
 
 void OrganicChemistryAudioProcessorEditor::resized()
 {
+    // 窗口大小变化（用户缩放 / 宿主调整）时实时记录宽度，宿主保存工程
+    // 时经 getStateInformation 持久化，重开界面时恢复。
+    if (getWidth() > 0)
+        processor.editorWidth.store (getWidth());
+
     const float s = uiScale();
 
     // Propagate the scale so children can size their own strokes and fonts.
@@ -533,6 +550,14 @@ void OrganicChemistryAudioProcessorEditor::resized()
     {
         const int rs = (int) (kResizerSize * s);
         resizer->setBounds (getWidth() - rs, getHeight() - rs, rs, rs);
+    }
+
+    // 顶栏底部分隔线：贴顶栏底边绘制（线高 1 设计像素，位于顶栏内部，
+    // 不与 ElementBar 区域重叠，因此 REACTION 面板展开时不会被覆盖）。
+    {
+        const int hairH = juce::jmax (1, juce::roundToInt (1.0f * s));
+        const int topY  = (int) (kTopBarHeight * s);
+        topHairline.setBounds (0, topY - hairH, getWidth(), hairH);
     }
 }
 

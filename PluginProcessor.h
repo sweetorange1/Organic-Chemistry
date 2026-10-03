@@ -297,6 +297,13 @@ public:
     /** APVTS 参数变化回调（宿主自动化或 UI 经 APVTS 写入时触发）。 */
     void parameterChanged (const juce::String& parameterID, float newValue) override;
 
+    // ===== 编辑器窗口大小持久化 =====
+    // 宿主（如 FL Studio）不会记录插件经 resizeView 程序化改动的窗口大小，
+    // 每次打开界面都会回到初始大小。这里仿照同系列 Entropy 的方案自己持久化：
+    // 编辑器 resized() 实时写入宽度，getStateInformation / setStateInformation
+    // 随工程保存与恢复，编辑器构造时按此宽度恢复（高度按固定宽高比换算）。
+    std::atomic<int> editorWidth { 820 };
+
     /** 设置分子波表（近正弦），osc_1 使用。UI 线程调用。 */
     void setMoleculeWave (const organic::WaveTable& table);
 

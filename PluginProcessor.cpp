@@ -1838,6 +1838,8 @@ void OrganicChemistryAudioProcessor::getStateInformation (juce::MemoryBlock& des
 {
     // 统一包装：根节点下挂 ADSR 参数树 + 分子拓扑，便于日后扩展。
     juce::ValueTree root ("OrganicChemistryState");
+    root.setProperty ("editorWidth", editorWidth.load(), nullptr);
+
     if (apvts != nullptr)
         root.appendChild (apvts->copyState(), nullptr);
 
@@ -1871,6 +1873,9 @@ void OrganicChemistryAudioProcessor::setStateInformation (const void* data, int 
 
     if (tree.hasType ("OrganicChemistryState"))
     {
+        // 编辑器窗口宽度（50% ~ 200% 设计宽度，与编辑器 constrainer 的限制一致）。
+        editorWidth.store (juce::jlimit (410, 1640, (int) tree.getProperty ("editorWidth", 820)));
+
         // 新格式：分别恢复 ADSR 参数与分子拓扑。
         if (apvts != nullptr)
         {

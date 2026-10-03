@@ -10,7 +10,7 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`Organic Chemistry`（版本 `1.1.1`）
+- **产品名**：`Organic Chemistry`（版本 `1.1.2`）
 - **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。核心是一个复刻 Vital「BELL Reflections」预设的三正弦钟声引擎；用户在界面中"搭建分子"，分子的规范 SMILES 经确定性哈希映射到 Bell 引擎的 33 个参数——**分子即预设**。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
@@ -21,7 +21,9 @@
 
 ### 1.2 当前阶段与主要功能
 
-**已完成（v1.1.1）**：
+**已完成（v1.1.2）**：
+- **顶栏分隔线固定绘制**：分隔线改由独立顶层组件绘制，展开 REACTION 面板时不再被其白色填充盖住半条线而变淡变细（v1.1.2）
+- **编辑器窗口大小持久化**：宿主不记录插件经 resizeView 程序化改动的窗口大小，现仿照 Entropy 自持久化——`processor.editorWidth` 随工程保存/恢复，重开界面时窗口大小保持（v1.1.2）
 - 底部元素栏选择 C / O / N / S / P
 - 画布**按下拖拽放置原子**：按下显示虚影（ghost），松手才落子
 - 从一个原子**拖到另一个原子**成键连接（受价键约束，无法连接的不支持）
@@ -1207,6 +1209,7 @@ v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」�
 
 | 版本 | 内容 |
 | --- | --- |
+| **1.1.2** | **UI 修复 × 2。** ① 顶栏底部分隔线改由独立顶层组件 `TopHairline` 绘制（添加顺序在 elementBar 之后），修复切换页签时 REACTION 面板展开被 `fillAll(white)` 盖住半条线导致的"变淡变细"。② 编辑器窗口大小自持久化（仿 Entropy）：`processor.editorWidth` 原子量 + 编辑器 `resized()` 实时写入 + `timerCallback` 每帧拉回 + `getStateInformation`/`setStateInformation` 随工程保存恢复，修复宿主不记录插件窗口大小、每次打开界面被重置的问题 |
 | **1.1.1** | **bug 修复：修复 Yield（Sustain）旋钮 100% 时延音消失。** 根因是 `BellVoice` 包络状态机缺失 sustain 态：sustain=1.0 时 decay 首帧即达平台并立即转入 release，延音平台不存在。修复：恢复 `EnvState::sustain`，decay 到达 sustain 后停住、note-off 才 release；sustain=0 时保持原钟声行为 |
 | **1.1.0** | **ADSR 控制器 + 反应页签。** ① 底部元素栏新增 MOLECULE / REACTION 页签，切到 REACTION 后元素色块动画过渡为 4 个 ADSR 旋钮（化学隐喻包装：Temperature→Attack、Pressure→Decay、Yield→Sustain、Mass→Release），支持拖拽 + 双击输入精确值。② ADSR 与分子映射解绑，包络不再随分子结构变化。③ ADSR 参数接入 `AudioProcessorValueTreeState`，支持宿主自动化 / MIDI CC / 工程持久化（新状态格式兼容旧工程）。④ 修复分子模式画布被页签白条遮挡、右上角 Clear/Reset 文案需悬停才刷新两个问题 |
 | **1.0.1** | **bug 修复：修复高音高（E9 及以上）触发 NaN 崩溃。** 根因是滤波 keytrack 把截止频率推到 Nyquist 以上，TPT 滤波器 tan() 溢出为 Inf/NaN 并永久污染状态，导致电流声后整机静音。修复：钳制截止频率到 [20, 0.45×sr]，输出端加 NaN 兜底并重置滤波器；BellTests 新增高音高回归测试 |

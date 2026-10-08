@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
 #include <vector>
 
 // ============================================================
@@ -35,8 +36,26 @@ enum class Element
     Sulfur,
     Phosphorus,
     Hydrogen,   // auto-generated, not offered in the element bar
+    Fluorine = 6,
+    Chlorine,
+    Bromine,
+    Iodine,
     Count
 };
+
+inline constexpr std::array<Element, 4> halogenElements {
+    Element::Fluorine, Element::Chlorine, Element::Bromine, Element::Iodine
+};
+
+inline constexpr bool isHalogen (Element e) noexcept
+{
+    return e >= Element::Fluorine && e <= Element::Iodine;
+}
+
+inline constexpr bool isHeavyElement (Element e) noexcept
+{
+    return (e >= Element::Carbon && e <= Element::Phosphorus) || isHalogen (e);
+}
 
 struct ElementInfo
 {
@@ -74,8 +93,14 @@ inline const ElementInfo& elementInfo (Element e)
         {  "S",    "Sulfur",     0xFFD9A63A,  2,   16.5f,  32.060f, 6,  2.58f },
         {  "P",    "Phosphorus", 0xFFCE7A3C,  3,   16.0f,  30.974f, 5,  2.19f },
         {  "H",    "Hydrogen",   0xFFB8B8B8,  1,    7.5f,   1.008f, 1,  2.20f },
+        {  "F",    "Fluorine",   0xFF5C9472,  1,   13.0f,  18.998f, 7,  3.98f },
+        { "Cl",    "Chlorine",   0xFF72A15A,  1,   16.0f,  35.450f, 7,  3.16f },
+        { "Br",    "Bromine",    0xFF98524A,  1,   17.5f,  79.904f, 7,  2.96f },
+        {  "I",    "Iodine",     0xFF8065A0,  1,   19.0f, 126.904f, 7,  2.66f },
     };
-    return table[(int) e];
+    static_assert (std::size (table) == (size_t) Element::Count);
+    jassert (e >= Element::Carbon && e < Element::Count);
+    return table[juce::jlimit (0, (int) Element::Count - 1, (int) e)];
 }
 
 /** Experimental valence angle at an atom, in degrees.
@@ -274,7 +299,11 @@ public:
 
         @return index of the new atom, or -1 when the molecule is saturated.
     */
-    int addAtom (Element element, juce::Point<float> hint);
+    int addAtom (Element element, juce::Point<float> hint, int anchor = -1);
+    int attachmentIndex (Element element, juce::Point<float> hint) const;
+    juce::Point<float> placementPosition (int anchor, juce::Point<float> hint) const;
+    bool canAttach (Element element, int anchor) const;
+    static constexpr int maxHeavyAtoms = 512;
 
     /** Connect two heavy atoms with a new single bond.
 
@@ -341,6 +370,8 @@ public:
     const std::vector<Bond>& bonds() const { return bondList; }
 
     int heavyAtomCount() const;
+    std::array<int, 4> halogenCounts() const;
+    Molecule withoutHalogens() const;
 
     /** Molecular formula in Hill order (C, then H, then alphabetical). */
     juce::String formula() const;
@@ -405,12 +436,10 @@ public:
         restore. Used for DAW project persistence. */
     juce::ValueTree toValueTree() const;
 
-    /** Rebuild the molecule from a ValueTree produced by toValueTree().
-
-        The molecule is cleared first, heavy atoms are placed on a ring, then
-        bonds and hydrogens are rebuilt. A valid but empty tree simply clears
-        the molecule. Invalid / wrong-typed trees are ignored. */
-    void fromValueTree (const juce::ValueTree& tree);
+    /** Validate the complete heavy-atom graph before restoring it.
+        Invalid elements, valences, C-X bonds or disconnected graphs leave
+        the current molecule unchanged. A valid empty tree clears it. */
+    bool fromValueTree (const juce::ValueTree& tree);
 
     // --- Geometry ---
 

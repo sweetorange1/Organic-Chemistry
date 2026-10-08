@@ -54,49 +54,98 @@ int Molecule::heavyAtomCount() const
     return n;
 }
 
+std::array<int, 4> Molecule::halogenCounts() const
+{
+    std::array<int, 4> counts {};
+    for (const auto& atom : atomList)
+        if (isHalogen (atom.element))
+            ++counts[(size_t) ((int) atom.element - (int) Element::Fluorine)];
+    return counts;
+}
+
+Molecule Molecule::withoutHalogens() const
+{
+    Molecule parent;
+    std::vector<int> remap (atomList.size(), -1);
+    for (size_t i = 0; i < atomList.size(); ++i)
+    {
+        if (atomList[i].isHydrogen || isHalogen (atomList[i].element))
+            continue;
+        remap[i] = (int) parent.atomList.size();
+        parent.atomList.push_back (atomList[i]);
+    }
+    for (const auto& bond : bondList)
+        if (remap[(size_t) bond.a] >= 0 && remap[(size_t) bond.b] >= 0)
+            parent.bondList.emplace_back (remap[(size_t) bond.a], remap[(size_t) bond.b], bond.order);
+    parent.rebuildHydrogens();
+    return parent;
+}
+
 // ---------------------------------------------------------------------------
 //  Add atom
 // ---------------------------------------------------------------------------
 
-int Molecule::addAtom (Element element, juce::Point<float> hint)
+int Molecule::addAtom (Element element, juce::Point<float> hint, int anchor)
 {
-    // Seed atom: drop it straight at the hint position.
-    if (heavyAtomCount() == 0)
+    const int count = heavyAtomCount();
+    if (! isHeavyElement (element) || count >= maxHeavyAtoms
+        || ! std::isfinite (hint.x) || ! std::isfinite (hint.y))
+        return -1;
+
+    if (count == 0)
     {
-        atomList.clear();
-        bondList.clear();
-
+        if (isHalogen (element) || anchor >= 0)
+            return -1;
         atomList.emplace_back (element, hint);
-
         rebuildHydrogens();
         settling = true;
         return 0;
     }
 
-    // Pick an attachment point: a heavy atom with free valence, nearest to hint.
-    int   bestIdx  = -1;
-    float bestDist = std::numeric_limits<float>::max();
+    const int target = anchor >= 0 ? anchor : attachmentIndex (element, hint);
+    if (! canAttach (element, target))
+        return -1;
 
+    const auto position = placementPosition (target, hint);
+    atomList.emplace_back (element, position);
+    bondList.emplace_back (target, (int) atomList.size() - 1, 1);
+    rebuildHydrogens();
+    settling = true;
+    return count;
+}
+
+bool Molecule::canAttach (Element element, int anchor) const
+{
+    if (! isHeavyElement (element) || ! canGrowFrom (anchor) || heavyAtomCount() >= maxHeavyAtoms)
+        return false;
+    const auto target = atomList[(size_t) anchor].element;
+    if (isHalogen (target))
+        return false;
+    return ! isHalogen (element) || target == Element::Carbon;
+}
+
+int Molecule::attachmentIndex (Element element, juce::Point<float> hint) const
+{
+    int bestIdx = -1;
+    float bestDist = std::numeric_limits<float>::max();
     for (size_t i = 0; i < atomList.size(); ++i)
     {
-        const auto& a = atomList[i];
-        if (a.isHydrogen)
+        if (! canAttach (element, (int) i))
             continue;
-
-        const int freeValence = elementInfo (a.element).valence - heavyBondOrderSum ((int) i);
-        if (freeValence <= 0)
-            continue;
-
-        const float d = a.pos.getDistanceFrom (hint);
-        if (d < bestDist)
+        const float distance = atomList[i].pos.getDistanceFrom (hint);
+        if (distance < bestDist)
         {
-            bestDist = d;
-            bestIdx  = (int) i;
+            bestDist = distance;
+            bestIdx = (int) i;
         }
     }
+    return bestIdx;
+}
 
-    if (bestIdx < 0)
-        return -1;   // fully saturated, nowhere to attach
+juce::Point<float> Molecule::placementPosition (int bestIdx, juce::Point<float> hint) const
+{
+    if (bestIdx < 0 || bestIdx >= (int) atomList.size())
+        return hint;
 
     // Place the new atom one bond length away from the anchor.
     //
@@ -179,13 +228,7 @@ int Molecule::addAtom (Element element, juce::Point<float> hint)
         dir = { std::cos (bestBisector), std::sin (bestBisector) };
     }
 
-    atomList.emplace_back (element, anchor + dir * kHeavyBondLength);
-    const int newIdx = (int) atomList.size() - 1;
-    bondList.emplace_back (bestIdx, newIdx, 1);
-
-    rebuildHydrogens();
-    settling = true;
-    return newIdx;
+    return anchor + dir * kHeavyBondLength;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +262,8 @@ bool Molecule::canConnect (int a, int b) const
         return false;
     if (a == b)
         return false;
-    if (atomList[(size_t) a].isHydrogen || atomList[(size_t) b].isHydrogen)
+    if (atomList[(size_t) a].isHydrogen || atomList[(size_t) b].isHydrogen
+        || isHalogen (atomList[(size_t) a].element) || isHalogen (atomList[(size_t) b].element))
         return false;
 
     // A bond already exists between them; raising its order goes through
@@ -399,17 +443,20 @@ void Molecule::keepLargestFragment()
         ++componentCount;
     }
 
-    if (componentCount <= 1)
-        return;   // still a single molecule, nothing to prune
-
-    // Pick the largest component; ties break towards the lower index so the
-    // result is deterministic.
     std::vector<int> sizes ((size_t) componentCount, 0);
     for (size_t i = 0; i < n; ++i)
-        ++sizes[(size_t) component[i]];
+        if (! isHalogen (atomList[i].element) || ! adjacency[i].empty())
+            ++sizes[(size_t) component[i]];
 
-    const int keep = (int) std::distance (sizes.begin(),
-                                         std::max_element (sizes.begin(), sizes.end()));
+    const auto largest = std::max_element (sizes.begin(), sizes.end());
+    if (*largest == 0)
+    {
+        clear();
+        return;
+    }
+    if (componentCount <= 1)
+        return;
+    const int keep = (int) std::distance (sizes.begin(), largest);
 
     // Compact atoms and bonds down to the surviving component.
     std::vector<Atom> kept;
@@ -1531,9 +1578,12 @@ juce::String Molecule::ringStructuralFormula() const
         out << elementInfo (atomList[(size_t) heavy[(size_t) u]].element).symbol;
 
         for (int rn : openRings[(size_t) u])
-            out << rn;
+            out << (rn >= 10 ? "%" : "") << rn;
         for (int rn : closeRings[(size_t) u])
-            out << rn;
+        {
+            const int order = hBonds[(size_t) rings[(size_t) rn - 1].bondIndex].order;
+            out << bondSymbol (order) << (rn >= 10 ? "%" : "") << rn;
+        }
 
         // Gather the tree children (skip parent, back edges and visited nodes).
         std::vector<std::pair<int, int>> children;
@@ -1546,7 +1596,7 @@ juce::String Molecule::ringStructuralFormula() const
             children.emplace_back (v, bi);
         }
 
-        for (size_t i = 0; i < children.size(); ++i)
+        for (size_t i = children.size(); i-- > 0;)
         {
             const int v = children[i].first;
             const int bi = children[i].second;
@@ -1630,6 +1680,20 @@ juce::String Molecule::structuralFormula() const
         return s;
     };
 
+    std::function<juce::String (int, int)> renderBranch = [&] (int atom, int parent)
+    {
+        auto text = renderAtom (atom);
+        for (int child : branchesOf (atom))
+        {
+            if (child == parent)
+                continue;
+            const int order = orderBetween (atom, child);
+            text << "(" << (order == 2 ? "=" : (order == 3 ? "#" : ""))
+                 << renderBranch (child, atom) << ")";
+        }
+        return text;
+    };
+
     juce::String out;
 
     for (size_t k = 0; k < chain.size(); ++k)
@@ -1642,7 +1706,7 @@ juce::String Molecule::structuralFormula() const
         {
             const int order = orderBetween (idx, branch);
             const juce::String link = (order == 2) ? "=" : (order >= 3 ? "#" : "");
-            out << "(" << link << renderAtom (branch) << ")";
+            out << "(" << link << renderBranch (branch, idx) << ")";
         }
 
         // Bond symbol towards the next chain atom: - single, = double, # triple.
@@ -1674,6 +1738,10 @@ int atomicNumber (Element e)
         case Element::Oxygen:     return 8;
         case Element::Phosphorus: return 15;
         case Element::Sulfur:     return 16;
+        case Element::Fluorine:   return 9;
+        case Element::Chlorine:   return 17;
+        case Element::Bromine:    return 35;
+        case Element::Iodine:     return 53;
         default:                  return 0;   // Hydrogen
     }
 }
@@ -1726,6 +1794,8 @@ const CommonSubstance kCommonSubstances[] = {
 
 juce::String Molecule::canonicalSmiles() const
 {
+    if (std::any_of (atomList.begin(), atomList.end(), [] (const Atom& atom) { return isHalogen (atom.element); }))
+        return ringStructuralFormula();
     const size_t total = atomList.size();
 
     std::vector<int> local (total, -1);
@@ -2633,6 +2703,7 @@ void Molecule::seedLayout()
 juce::ValueTree Molecule::toValueTree() const
 {
     juce::ValueTree root ("Molecule");
+    root.setProperty ("schemaVersion", 2, nullptr);
 
     // Heavy atoms in their canonical index order.
     for (const auto& a : atomList)
@@ -2670,67 +2741,95 @@ juce::ValueTree Molecule::toValueTree() const
     return root;
 }
 
-void Molecule::fromValueTree (const juce::ValueTree& tree)
+bool Molecule::fromValueTree (const juce::ValueTree& tree)
 {
-    // Reject malformed input: a non-"Molecule" tree is not our state.
-    if (! tree.isValid() || tree.getType() != juce::Identifier ("Molecule"))
-        return;
+    if (! tree.hasType ("Molecule") || tree.getNumChildren() > maxHeavyAtoms * 4)
+        return false;
 
-    clear();
-
-    // Pass 1: heavy atoms (their order defines the bond indices).
-    std::vector<Element> heavyElements;
-
-    for (int i = 0; i < tree.getNumChildren(); ++i)
+    const auto integer = [] (const juce::ValueTree& node, const char* key, int& result)
     {
-        const auto child = tree.getChild (i);
-        if (child.getType() == juce::Identifier ("Atom"))
+        const auto text = node.getProperty (key).toString();
+        if (text.isEmpty() || text.length() > 8 || ! text.containsOnly ("0123456789"))
+            return false;
+        result = text.getIntValue();
+        return true;
+    };
+    if (tree.hasProperty ("schemaVersion"))
+    {
+        int version = 0;
+        if (! integer (tree, "schemaVersion", version) || version < 1 || version > 2)
+            return false;
+    }
+
+    Molecule next;
+    for (const auto& child : tree)
+    {
+        if (child.getNumChildren() != 0)
+            return false;
+        if (child.hasType ("Atom"))
         {
-            const int e = juce::jlimit ((int) Element::Carbon,
-                                        (int) Element::Phosphorus,
-                                        (int) child.getProperty ("element", (int) Element::Carbon));
-            heavyElements.push_back ((Element) e);
+            int value = -1;
+            if (! integer (child, "element", value) || ! isHeavyElement ((Element) value)
+                || next.atomList.size() >= (size_t) maxHeavyAtoms)
+                return false;
+            next.atomList.emplace_back ((Element) value, juce::Point<float>());
         }
+        else if (! child.hasType ("Bond"))
+            return false;
     }
 
-    const int n = (int) heavyElements.size();
+    const int n = (int) next.atomList.size();
+    std::vector<int> valence ((size_t) n, 0);
+    std::vector<std::vector<int>> adjacency ((size_t) n);
+    for (const auto& child : tree)
+    {
+        if (! child.hasType ("Bond"))
+            continue;
+        int a = -1, b = -1, order = 0;
+        if (! integer (child, "a", a) || ! integer (child, "b", b) || ! integer (child, "order", order)
+            || a >= n || b >= n || a == b || order < 1 || order > 3)
+            return false;
+        const auto A = next.atomList[(size_t) a].element;
+        const auto B = next.atomList[(size_t) b].element;
+        if ((isHalogen (A) && (B != Element::Carbon || order != 1))
+            || (isHalogen (B) && (A != Element::Carbon || order != 1)))
+            return false;
+        if (std::find (adjacency[(size_t) a].begin(), adjacency[(size_t) a].end(), b) != adjacency[(size_t) a].end())
+            return false;
+        valence[(size_t) a] += order;
+        valence[(size_t) b] += order;
+        if (valence[(size_t) a] > elementInfo (A).valence || valence[(size_t) b] > elementInfo (B).valence)
+            return false;
+        adjacency[(size_t) a].push_back (b);
+        adjacency[(size_t) b].push_back (a);
+        next.bondList.emplace_back (a, b, order);
+    }
 
-    // Positions are filled in by seedLayout() once the bonds are known; a
-    // tiny deterministic offset just avoids exactly coincident atoms in case
-    // the tree turns out to have no bonds at all.
     for (int i = 0; i < n; ++i)
+        if (isHalogen (next.atomList[(size_t) i].element) && valence[(size_t) i] != 1)
+            return false;
+    if (n > 0)
     {
-        const float angle = juce::MathConstants<float>::twoPi
-                          * (float) i / (float) juce::jmax (1, n);
-        atomList.emplace_back (heavyElements[(size_t) i],
-                               juce::Point<float> (std::cos (angle) * kHeavyBondLength,
-                                                   std::sin (angle) * kHeavyBondLength));
+        std::vector<bool> visited ((size_t) n, false);
+        std::vector<int> pending { 0 };
+        visited[0] = true;
+        for (size_t i = 0; i < pending.size(); ++i)
+            for (const int neighbour : adjacency[(size_t) pending[i]])
+                if (! visited[(size_t) neighbour])
+                {
+                    visited[(size_t) neighbour] = true;
+                    pending.push_back (neighbour);
+                }
+        if (pending.size() != (size_t) n)
+            return false;
     }
 
-    // Pass 2: bonds.
-    for (int i = 0; i < tree.getNumChildren(); ++i)
-    {
-        const auto child = tree.getChild (i);
-        if (child.getType() != juce::Identifier ("Bond"))
-            continue;
-
-        const int a = (int) child.getProperty ("a", -1);
-        const int b = (int) child.getProperty ("b", -1);
-        const int order = juce::jlimit (1, 3, (int) child.getProperty ("order", 1));
-
-        if (a < 0 || b < 0 || a >= n || b >= n || a == b)
-            continue;
-
-        bondList.emplace_back (a, b, order);
-    }
-
-    // The ring cache must see the new bonds before seedLayout() asks for rings.
-    invalidateTopology();
-
-    // Ring-aware starting geometry, then hydrogens on the finished skeleton.
-    seedLayout();
-    rebuildHydrogens();
-    settling = true;
+    next.invalidateTopology();
+    next.seedLayout();
+    next.rebuildHydrogens();
+    next.settling = true;
+    *this = std::move (next);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2754,6 +2853,10 @@ const std::vector<MoleculePreset>& moleculePresets()
     constexpr Element N = Element::Nitrogen;
     constexpr Element S = Element::Sulfur;
     constexpr Element P = Element::Phosphorus;
+    constexpr Element F  = Element::Fluorine;
+    constexpr Element Cl = Element::Chlorine;
+    constexpr Element Br = Element::Bromine;
+    constexpr Element I  = Element::Iodine;
 
     static const std::vector<MoleculePreset> list = {
         // --- one and two heavy atoms ---
@@ -2818,6 +2921,24 @@ const std::vector<MoleculePreset>& moleculePresets()
           { {0,1,1}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,1,1},
             {5,6,1}, {6,7,2}, {6,8,1}, {8,9,1}, {8,10,1}, {10,11,2},
             {10,12,1}, {12,4,1}, {12,13,1} } },
+
+        // --- halogenated compounds (v1.2.0) ---
+        { "Fluorobenzene",        { C, C, C, C, C, C, F },
+          { {0,1,2}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,0,1}, {0,6,1} } },
+        { "Chlorobenzene",        { C, C, C, C, C, C, Cl },
+          { {0,1,2}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,0,1}, {0,6,1} } },
+        { "Bromobenzene",         { C, C, C, C, C, C, Br },
+          { {0,1,2}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,0,1}, {0,6,1} } },
+        { "Iodobenzene",          { C, C, C, C, C, C, I },
+          { {0,1,2}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,0,1}, {0,6,1} } },
+        { "Chloroform",           { C, Cl, Cl, Cl },
+          { {0,1,1}, {0,2,1}, {0,3,1} } },
+        { "Carbon tetrachloride", { C, Cl, Cl, Cl, Cl },
+          { {0,1,1}, {0,2,1}, {0,3,1}, {0,4,1} } },
+        { "Methylene chloride",   { C, Cl, Cl },
+          { {0,1,1}, {0,2,1} } },
+        { "Tetrafluoroethylene",  { C, C, F, F, F, F },
+          { {0,1,2}, {0,2,1}, {0,3,1}, {1,4,1}, {1,5,1} } },
     };
 
     return list;
@@ -2837,6 +2958,10 @@ const std::vector<MoleculePreset>& namedMolecules()
     constexpr Element O = Element::Oxygen;
     constexpr Element N = Element::Nitrogen;
     constexpr Element S = Element::Sulfur;
+    constexpr Element F  = Element::Fluorine;
+    constexpr Element Cl = Element::Chlorine;
+    constexpr Element Br = Element::Bromine;
+    constexpr Element I  = Element::Iodine;
 
     static const std::vector<MoleculePreset> extras = {
         // --- alkenes / alkynes ---
@@ -2930,6 +3055,16 @@ const std::vector<MoleculePreset>& namedMolecules()
           { {0,1,2}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,0,1}, {0,6,1}, {3,7,1} } },
         { "p-Cresol",          { C, C, C, C, C, C, C, O },
           { {0,1,2}, {1,2,1}, {2,3,2}, {3,4,1}, {4,5,2}, {5,0,1}, {0,6,1}, {3,7,1} } },
+
+        // --- halogenated species (v1.2.0) ---
+        { "Fluoromethane",             { C, F },          { {0,1,1} } },
+        { "Chloromethane",             { C, Cl },         { {0,1,1} } },
+        { "Bromomethane",              { C, Br },         { {0,1,1} } },
+        { "Iodomethane",               { C, I },          { {0,1,1} } },
+        { "Ethyl chloride",            { C, C, Cl },      { {0,1,1}, {1,2,1} } },
+        { "Vinyl chloride",            { C, C, Cl },      { {0,1,2}, {1,2,1} } },
+        { "Iodoform",                  { C, I, I, I },    { {0,1,1}, {0,2,1}, {0,3,1} } },
+        { "Dichlorodifluoromethane",   { C, Cl, Cl, F, F }, { {0,1,1}, {0,2,1}, {0,3,1}, {0,4,1} } },
     };
 
     // presets + extras, built once.

@@ -26,6 +26,7 @@
 //  No audio is produced at this stage: topology changes only refresh the UI.
 // ============================================================
 class OrganicChemistryAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                            public juce::TooltipClient,
                                             private juce::Timer
 {
 public:
@@ -38,6 +39,11 @@ public:
     void mouseDown (const juce::MouseEvent& event) override;
     void mouseMove (const juce::MouseEvent& event) override;
     void mouseExit (const juce::MouseEvent& event) override;
+    void visibilityChanged() override;
+    void advanceAnimationForTesting (int frames) { for (int i = 0; i < frames; ++i) timerCallback(); }
+
+    /** 顶栏自绘区域（网址 / 预设簇 / 箭头 / Clear-Reset）的动态悬停提示。 */
+    juce::String getTooltip() override;
 
     // Design size: every layout constant below is expressed at this size and
     // multiplied by uiScale when the window is resized.
@@ -86,6 +92,9 @@ private:
 
     void paintInfoBar (juce::Graphics& g) const;
 
+    /** 右上角波形预览窗口：置于标题带右上角（顶栏下方），保持加标题带前的视觉位置。 */
+    void paintWavePreview (juce::Graphics& g) const;
+
     /** 把当前分子重新映射到音频：波形始终跟随分子，效果参数仅在
         「自动」时被映射覆盖，「手动」参数保留用户设定值。 */
     void applyMoleculeToAudio();
@@ -94,6 +103,7 @@ private:
 
     organic::MoleculeCanvas canvas;
     organic::ElementBar     elementBar;
+    organic::HalogenWheel   halogenWheel;
     organic::TestPanel      testPanel;
     organic::PresetMenu     presetMenu;
 
@@ -136,8 +146,26 @@ private:
     int  currentPreset    = -1;
     bool applyingPreset   = false;   // guards the change callback
     bool presetMenuVisible = false;
+    unsigned int displayedRevision = 0;
 
     std::unique_ptr<iisaac::telemetry::Session> telemetrySession;
+
+    // ===== 悬停提示（v1.1.3）=====
+    // 白底细线样式，与系列视觉语言一致。只给 TooltipWindow 使用，不影响
+    // 全部自绘的画布 / 元素栏 / 预设面板；声明顺序保证 tooltip 析构时 LAF 仍存活。
+    class TooltipLookAndFeel final : public juce::LookAndFeel_V4
+    {
+    public:
+        TooltipLookAndFeel()
+        {
+            setColour (juce::TooltipWindow::backgroundColourId, juce::Colours::white);
+            setColour (juce::TooltipWindow::textColourId, juce::Colour (0xFF292D2E));
+            setColour (juce::TooltipWindow::outlineColourId, juce::Colour (0xFFE5E7E0));
+        }
+    };
+
+    TooltipLookAndFeel tooltipLaf;
+    juce::TooltipWindow tooltip { this, 650 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrganicChemistryAudioProcessorEditor)
 };

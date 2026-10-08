@@ -469,6 +469,7 @@ public:
                           int startSample, int numSamples) override;
     void pitchWheelMoved (int) override {}
     void controllerMoved (int, int) override {}
+    void prepare (double sampleRate);
 
 private:
     void updatePatch();
@@ -500,6 +501,9 @@ private:
     // 噪声击打采样（noise_attack_1，经 FILTER2 带通）。
     juce::dsp::StateVariableTPTFilter<float> noiseBandpass;
     double samplePos = 0.0;     // 采样播放位置（noteOn 重置为 0）
+    const float* sampleData = nullptr;
+    int sampleLength = 0;
+    double sampleRate = 44100.0;
     float preparedSr = 0.0f;    // 滤波器已准备的采样率
 
     juce::Random random;

@@ -149,6 +149,11 @@ ElementBar::ElementBar()
         s.selectAnim = (e == selected) ? 1.0f : 0.0f;
         slots.push_back (s);
     }
+    Slot halogen;
+    halogen.element = Element::Fluorine;
+    halogen.halogens = true;
+    slots.push_back (halogen);
+    setName ("Atom selection");
 
     // 初始旋钮位置由默认包络反推。
     knobValues[0] = paramToKnob (0, envAttack);
@@ -334,15 +339,24 @@ void ElementBar::paint (juce::Graphics& g)
             // Element symbol inside the chip.
             g.setColour (juce::Colours::white.withAlpha ((0.72f + 0.28f * s.selectAnim) * fade));
             g.setFont (juce::Font (juce::FontOptions (r * 0.95f).withStyle ("Bold")));
-            g.drawText (info.symbol,
+            g.drawText (s.halogens && ! isHalogen (selected) ? "X" : info.symbol,
                         juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (centre),
                         juce::Justification::centred, false);
+            if (s.halogens)
+            {
+                g.setColour (colour.withAlpha (0.65f * fade));
+                juce::Path arrow;
+                arrow.startNewSubPath (centre.x + 17.0f * uiScale, centre.y - 5.0f * uiScale);
+                arrow.lineTo (centre.x + 20.0f * uiScale, centre.y - 8.0f * uiScale);
+                arrow.lineTo (centre.x + 23.0f * uiScale, centre.y - 5.0f * uiScale);
+                g.strokePath (arrow, juce::PathStrokeType (uiScale));
+            }
 
             // Element name below the chip.
             const float labelAlpha = (0.30f + 0.55f * juce::jmax (s.selectAnim, s.hoverAnim)) * fade;
             g.setColour (juce::Colour (0xFF3A3A3A).withAlpha (labelAlpha));
             g.setFont (juce::Font (juce::FontOptions (10.5f * uiScale)));
-            g.drawText (info.name,
+            g.drawText (s.halogens ? "Halogens" : info.name,
                         juce::Rectangle<float> (s.bounds.getX(),
                                                 centre.y + r + 6.0f * uiScale,
                                                 s.bounds.getWidth(), 14.0f * uiScale),
@@ -373,6 +387,8 @@ void ElementBar::paint (juce::Graphics& g)
 
 void ElementBar::mouseDown (const juce::MouseEvent& e)
 {
+    if (! e.mods.isLeftButtonDown())
+        return;
     const auto p = e.position.toFloat();
 
     // 正在编辑旋钮时，点击输入框以外区域先提交当前值。
@@ -422,11 +438,24 @@ void ElementBar::mouseDown (const juce::MouseEvent& e)
     if (idx < 0)
         return;
 
+    if (slots[(size_t) idx].halogens)
+    {
+        halogenGesture = true;
+        if (onHalogenPress != nullptr)
+            onHalogenPress (e);
+        return;
+    }
     setSelected (slots[(size_t) idx].element);
 }
 
 void ElementBar::mouseDrag (const juce::MouseEvent& e)
 {
+    if (halogenGesture)
+    {
+        if (onHalogenDrag != nullptr)
+            onHalogenDrag (e);
+        return;
+    }
     if (dragKnob < 0)
         return;
 
@@ -442,17 +471,25 @@ void ElementBar::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
-void ElementBar::mouseUp (const juce::MouseEvent&)
+void ElementBar::mouseUp (const juce::MouseEvent& e)
 {
     dragKnob = -1;
+    if (halogenGesture)
+    {
+        halogenGesture = false;
+        if (onHalogenRelease != nullptr)
+            onHalogenRelease (e);
+    }
 }
 
 void ElementBar::setSelected (Element e)
 {
-    if (selected == e)
+    if (! isHeavyElement (e) || selected == e)
         return;
 
     selected = e;
+    if (isHalogen (e))
+        slots.back().element = e;
 
     if (onElementChosen != nullptr)
         onElementChosen (e);
@@ -504,6 +541,45 @@ void ElementBar::mouseExit (const juce::MouseEvent&)
         repaint();
     }
     setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+// ---------------------------------------------------------------------------
+//  Hover tooltips (v1.1.3)
+// ---------------------------------------------------------------------------
+
+juce::String ElementBar::getTooltip()
+{
+    const auto p = getMouseXYRelative().toFloat();
+
+    if (moleculeTabBounds().contains (p))
+        return "Build a molecule";
+    if (reactionTabBounds().contains (p))
+        return "Envelope controls";
+
+    if (expanded)
+    {
+        const int ki = knobIndexAt (p);
+        if (ki >= 0)
+        {
+            // 与旋钮顺序一致的化学隐喻说明：参数（反应条件）。
+            constexpr const char* kKnobTooltips[4] = {
+                "Attack (Temperature)", "Decay (Pressure)", "Sustain (Yield)", "Release (Mass)" };
+            return kKnobTooltips[ki];
+        }
+    }
+    else
+    {
+        const int idx = slotIndexAt (p);
+        if (idx >= 0)
+        {
+            const auto& slot = slots[(size_t) idx];
+            if (slot.halogens)
+                return "Hold, slide and release to choose a halogen";
+            return elementInfo (slot.element).name;
+        }
+    }
+
+    return {};
 }
 
 bool ElementBar::hitTest (int x, int y)
@@ -921,6 +997,261 @@ void ElementBar::paintKnobs (juce::Graphics& g, float alpha)
                                             cell.getWidth(), 13.0f * s),
                     juce::Justification::centred, false);
     }
+}
+
+namespace
+{
+// 绘制一段"扇形圆环"（annulus sector）。角度 aStart..aEnd 采用"从顶部顺时针"
+// 约定（0 = 正上方，π/2 = 右，−π/2 = 左），与 optionCentre / indexAt 一致。
+juce::Path ringSector (juce::Point<float> c, float rIn, float rOut, float aStart, float aEnd)
+{
+    constexpr int steps = 12;
+    const auto point = [&] (float a, float r)
+    {
+        return juce::Point<float> (c.x + r * std::sin (a), c.y - r * std::cos (a));
+    };
+    juce::Path p;
+    p.startNewSubPath (point (aStart, rOut));
+    for (int i = 1; i <= steps; ++i)
+        p.lineTo (point (aStart + (aEnd - aStart) * (float) i / (float) steps, rOut));
+    for (int i = steps; i >= 0; --i)
+        p.lineTo (point (aStart + (aEnd - aStart) * (float) i / (float) steps, rIn));
+    p.closeSubPath();
+    return p;
+}
+
+// 画一个以 c 为圆心、r 为半径的实心扇形（从圆心到外弧，角度 aStart..aEnd）。
+// 用作扇形盘的不透明底。
+juce::Path filledSector (juce::Point<float> c, float r, float aStart, float aEnd)
+{
+    constexpr int steps = 24;
+    const auto point = [&] (float a)
+    {
+        return juce::Point<float> (c.x + r * std::sin (a), c.y - r * std::cos (a));
+    };
+    juce::Path p;
+    p.startNewSubPath (c);
+    p.lineTo (point (aStart));
+    for (int i = 1; i <= steps; ++i)
+        p.lineTo (point (aStart + (aEnd - aStart) * (float) i / (float) steps));
+    p.closeSubPath();
+    return p;
+}
+}
+
+HalogenWheel::HalogenWheel()
+{
+    setName ("Halogen wheel");
+    setWantsKeyboardFocus (true);
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+const char* HalogenWheel::effectName (int index)
+{
+    // 按扇形视觉顺序（从左到右 F/I/Br/Cl）对应各自的效果。
+    constexpr const char* names[] { "Comb", "Chorus", "Saturation", "Ring mod" };
+    return names[juce::jlimit (0, 3, index)];
+}
+
+Element HalogenWheel::elementFor (int visualIndex)
+{
+    // 扇形从左到右：F / I / Br / Cl。
+    constexpr Element order[] { Element::Fluorine, Element::Iodine, Element::Bromine, Element::Chlorine };
+    return order[juce::jlimit (0, 3, visualIndex)];
+}
+
+void HalogenWheel::open (juce::Point<float> anchor, float scale)
+{
+    uiScale = scale;
+    anchorPoint = anchor;
+    const float rOut = 112.0f * scale;
+    centre = { juce::jlimit (rOut, getWidth() - rOut, anchor.x),
+               juce::jlimit (rOut, (float) getHeight(), anchor.y) };
+    hovered = -1;
+    opacity = 0.0f;
+    setVisible (true);
+    toFront (false);
+    if (isShowing())
+        grabKeyboardFocus();
+    repaint();
+}
+
+void HalogenWheel::dismiss()
+{
+    if (! isVisible())
+        return;
+    hovered = -1;
+    setVisible (false);
+    if (onDismissed != nullptr)
+        onDismissed();
+}
+
+int HalogenWheel::indexAt (juce::Point<float> position) const
+{
+    const auto offset = position - centre;
+    const float distance = offset.getDistanceFromOrigin();
+    const float rIn  = 46.0f * uiScale;
+    const float rOut = 112.0f * uiScale;
+    if (! getLocalBounds().toFloat().contains (position) || distance < rIn || distance > rOut)
+        return -1;
+    // 角度约定：0 = 正上方，π/2 = 右，−π/2 = 左。只接受上半扇形。
+    const float theta = std::atan2 (offset.x, -offset.y);
+    if (theta < -juce::MathConstants<float>::halfPi || theta > juce::MathConstants<float>::halfPi)
+        return -1;
+    const float quarterPi = juce::MathConstants<float>::halfPi * 0.5f;
+    return juce::jlimit (0, 3, (int) std::floor ((theta + juce::MathConstants<float>::halfPi) / quarterPi));
+}
+
+juce::Point<float> HalogenWheel::optionCentre (int index) const
+{
+    const float rMid = 79.0f * uiScale;
+    const float quarterPi = juce::MathConstants<float>::halfPi * 0.5f;
+    const float angle = -juce::MathConstants<float>::halfPi + ((float) index + 0.5f) * quarterPi;
+    return centre + juce::Point<float> (std::sin (angle), -std::cos (angle)) * rMid;
+}
+
+void HalogenWheel::track (juce::Point<float> position)
+{
+    if (! isVisible())
+        return;
+    const int next = indexAt (position);
+    if (hovered != next)
+    {
+        hovered = next;
+        repaint();
+    }
+}
+
+void HalogenWheel::release (juce::Point<float> position)
+{
+    if (! isVisible())
+        return;
+    const int chosen = indexAt (position);
+    dismiss();
+    if (chosen >= 0 && onChosen != nullptr)
+        onChosen (elementFor (chosen));
+}
+
+void HalogenWheel::advanceAnimation()
+{
+    if (isVisible() && opacity < 1.0f)
+    {
+        opacity = juce::jmin (1.0f, opacity + 0.16f);
+        repaint();
+    }
+}
+
+void HalogenWheel::paint (juce::Graphics& g)
+{
+    const float s = uiScale;
+    const float rIn  = 46.0f * s;
+    const float rOut = 112.0f * s;
+    const float quarterPi = juce::MathConstants<float>::halfPi * 0.5f;
+
+    // 半透明遮罩：扇形之外仍能看见下层，点击外部取消。
+    g.setColour (juce::Colours::white.withAlpha (0.4f * opacity));
+    g.fillAll();
+
+    // 指向卤素槽的引导线。
+    g.setColour (juce::Colour (0xffe5e7e0).withAlpha (opacity));
+    g.drawLine (centre.x, centre.y + rIn, anchorPoint.x, anchorPoint.y - 23.0f * s, s);
+
+    // 不透明白色扇形盘底：仅扇形覆盖的区域不透明，遮住下层分子画布。
+    {
+        juce::Path disc = filledSector (centre, rOut,
+                                        -juce::MathConstants<float>::halfPi,
+                                         juce::MathConstants<float>::halfPi);
+        g.setColour (juce::Colours::white.withAlpha (opacity));
+        g.fillPath (disc);
+    }
+
+    // 四块扇形圆环：从左到右 F / I / Br / Cl。
+    // 分两遍绘制：先非 hover 块，再 hover 块。相邻块共享半径边，若按自然顺序
+    // 绘制，后画的邻块会用浅色边框盖掉 hover 块的一条半径边（左三个都会这样，
+    // 最右的 Cl 因没有右侧邻块而正常）。让 hover 块最后画即可完整点亮其边框。
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            const bool isHover = (hovered == i);
+            if ((pass == 0 && isHover) || (pass == 1 && !isHover))
+                continue;
+
+            const float aStart = -juce::MathConstants<float>::halfPi + (float) i * quarterPi;
+            const float aEnd   = aStart + quarterPi;
+            const auto& info   = elementInfo (elementFor (i));
+            const auto colour  = juce::Colour (info.colour);
+
+            juce::Path sector = ringSector (centre, rIn, rOut, aStart, aEnd);
+            g.setColour (colour.withAlpha ((isHover ? 0.22f : 0.05f) * opacity));
+            g.fillPath (sector);
+            g.setColour ((isHover ? colour : juce::Colour (0xffe5e7e0)).withAlpha (opacity));
+            g.strokePath (sector, juce::PathStrokeType (s));
+
+            const auto p = optionCentre (i);
+            const auto label = juce::Rectangle<float> (80.0f * s, 42.0f * s).withCentre (p);
+            g.setColour (colour.withAlpha (opacity));
+            g.setFont (juce::Font (juce::FontOptions (20.0f * s)));
+            g.drawText (info.symbol, label.translated (0, -12.0f * s), juce::Justification::centred, false);
+            g.setColour (juce::Colour (0xff292d2e).withAlpha (opacity));
+            g.setFont (juce::Font (juce::FontOptions (8.5f * s)));
+            g.drawText (info.name, label.translated (0, 6.0f * s), juce::Justification::centred, false);
+            g.setColour (juce::Colour (0xff858983).withAlpha (opacity));
+            g.setFont (juce::Font (juce::FontOptions (7.5f * s)));
+            g.drawText (effectName (i), label.translated (0, 18.0f * s), juce::Justification::centred, false);
+        }
+    }
+
+    // 中心内圈：取消提示。
+    g.setColour (juce::Colour (0xff292d2e).withAlpha (opacity));
+    g.setFont (juce::Font (juce::FontOptions (18.0f * s)));
+    g.drawText ("X", juce::Rectangle<float> (44.0f * s, 22.0f * s).withCentre (centre).translated (0, -6.0f * s),
+                juce::Justification::centred, false);
+    g.setColour (juce::Colour (0xff858983).withAlpha (opacity));
+    g.setFont (juce::Font (juce::FontOptions (7.5f * s)));
+    g.drawText ("Cancel", juce::Rectangle<float> (44.0f * s, 14.0f * s).withCentre (centre).translated (0, 8.0f * s),
+                juce::Justification::centred, false);
+
+    g.setFont (juce::Font (juce::FontOptions (10.0f * s)));
+    g.drawText (hovered >= 0 ? "Release to select" : "Slide to a halogen / Esc to cancel",
+                juce::Rectangle<float> (292.0f * s, 20.0f * s).withCentre ({ centre.x, centre.y - rOut - 16.0f * s }),
+                juce::Justification::centred, false);
+}
+
+bool HalogenWheel::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::escapeKey)
+    {
+        dismiss();
+        return true;
+    }
+    if (key == juce::KeyPress::leftKey || key == juce::KeyPress::upKey
+        || key == juce::KeyPress::rightKey || key == juce::KeyPress::downKey)
+    {
+        const int delta = (key == juce::KeyPress::leftKey || key == juce::KeyPress::upKey) ? -1 : 1;
+        hovered = hovered < 0 ? 0 : (hovered + delta + 4) % 4;
+        repaint();
+        return true;
+    }
+    if (key == juce::KeyPress::returnKey && hovered >= 0)
+    {
+        release (optionCentre (hovered));
+        return true;
+    }
+    return false;
+}
+
+void HalogenWheel::focusLost (FocusChangeType)
+{
+    dismiss();
+}
+
+void HalogenWheel::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isLeftButtonDown() || indexAt (e.position) < 0)
+        dismiss();
+    else
+        track (e.position);
 }
 
 } // namespace organic

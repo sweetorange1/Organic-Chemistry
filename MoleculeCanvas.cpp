@@ -19,6 +19,8 @@ constexpr float kFitPadding = 24.0f;
 
 MoleculeCanvas::MoleculeCanvas()
 {
+    setName ("Molecule canvas");
+    setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::NormalCursor);
 }
 
@@ -105,7 +107,6 @@ void MoleculeCanvas::paint (juce::Graphics& g)
     {
         paintEmptyHint (g);
         paintGhost (g);
-        paintWavePreview (g);
         return;
     }
 
@@ -125,8 +126,7 @@ void MoleculeCanvas::paint (juce::Graphics& g)
                        1.2f * uiScale);
     }
 
-    // 右上角波形预览窗口（无论分子是否为空都显示）。
-    paintWavePreview (g);
+    // 右上角波形预览窗口已移至 PluginEditor（标题带右上角），不再在画布内绘制。
 }
 
 void MoleculeCanvas::paintBonds (juce::Graphics& g) const
@@ -279,7 +279,8 @@ void MoleculeCanvas::paintEmptyHint (juce::Graphics& g) const
 
     g.setColour (kHintText);
     g.setFont (juce::Font (juce::FontOptions (13.5f * uiScale)));
-    g.drawText (juce::String ("Click anywhere to place ") + info.symbol,
+    g.drawText (isHalogen (currentElement) ? juce::String ("Build a carbon skeleton first")
+                                         : juce::String ("Click anywhere to place ") + info.symbol,
                 area.withHeight (24.0f * uiScale)
                     .withCentre ({ area.getCentreX(), area.getCentreY() - 6.0f * uiScale }),
                 juce::Justification::centred, false);
@@ -367,7 +368,7 @@ void MoleculeCanvas::paintGhost (juce::Graphics& g) const
     const auto& info = elementInfo (currentElement);
     const float s = drawScale();
 
-    const auto centre = modelToScreen (dragCurrentModel);
+    const auto centre = modelToScreen (dragGhostModel);
     const float r = info.radius * s;
 
     // Grey the ghost out when the release position is not placeable / bondable.
@@ -375,9 +376,10 @@ void MoleculeCanvas::paintGhost (juce::Graphics& g) const
                                         : juce::Colour (0xFFB0B0B0);
 
     // Preview the bond that will form when dragging outwards from an atom.
-    if (dragSourceAtom >= 0)
+    const int source = dragTargetAtom >= 0 ? dragSourceAtom : dragAttachAtom;
+    if (source >= 0 && source < (int) molecule.atoms().size())
     {
-        const auto src = modelToScreen (molecule.atoms()[(size_t) dragSourceAtom].pos);
+        const auto src = modelToScreen (molecule.atoms()[(size_t) source].pos);
         g.setColour (base.withAlpha (0.45f));
         g.drawLine (src.x, src.y, centre.x, centre.y, 1.4f * uiScale);
     }
@@ -412,61 +414,6 @@ void MoleculeCanvas::paintGhost (juce::Graphics& g) const
 }
 
 // ---------------------------------------------------------------------------
-//  Wave preview  (top-right waveform window)
-// ---------------------------------------------------------------------------
-
-void MoleculeCanvas::paintWavePreview (juce::Graphics& g) const
-{
-    const float s = uiScale;
-
-    // 设计尺寸 180×50，随 uiScale 等比缩放。
-    const float w = 180.0f * s;
-    const float h = 50.0f * s;
-    const float margin = 12.0f * s;
-
-    const auto bounds = juce::Rectangle<float> (
-        (float) getWidth() - w - margin, margin, w, h);
-
-    // 背景 + 细边框。
-    g.setColour (juce::Colour (0xFFF7F7F3));
-    g.fillRect (bounds);
-    g.setColour (juce::Colour (0xFFDCDCD5));
-    g.drawRect (bounds, 1.0f * s);
-
-    // 水平零线。
-    g.setColour (juce::Colour (0xFFE8E8E2));
-    g.drawLine (bounds.getX(), bounds.getCentreY(),
-                bounds.getRight(), bounds.getCentreY(), 1.0f * s);
-
-    // 波形曲线。
-    if (previewWaveProvider == nullptr)
-        return;
-
-    const auto wave = previewWaveProvider();
-    const int count = (int) wave.size();
-    if (count < 2)
-        return;
-
-    const float midY = bounds.getCentreY();
-    const float amp = h * 0.40f;
-    const float x0 = bounds.getX() + 3.0f * s;
-    const float x1 = bounds.getRight() - 3.0f * s;
-
-    juce::Path path;
-    path.startNewSubPath (x0, midY - wave[0] * amp);
-
-    for (int i = 1; i < count; ++i)
-    {
-        const float x = x0 + (float) i * (x1 - x0) / (float) (count - 1);
-        const float y = midY - wave[(size_t) i] * amp;
-        path.lineTo (x, y);
-    }
-
-    g.setColour (juce::Colour (0xFF2A2A28));
-    g.strokePath (path, juce::PathStrokeType (1.3f * s));
-}
-
-// ---------------------------------------------------------------------------
 //  Interaction
 // ---------------------------------------------------------------------------
 
@@ -474,6 +421,14 @@ void MoleculeCanvas::mouseDown (const juce::MouseEvent& e)
 {
     if (onPointerDown != nullptr)
         onPointerDown();
+    if (dragActive && e.mods.isRightButtonDown())
+    {
+        cancelDrag();
+        return;
+    }
+    cancelDrag();
+    if (isShowing())
+        grabKeyboardFocus();
 
     const auto screenPos = e.position;
     const auto modelPos = screenToModel (screenPos);
@@ -514,7 +469,7 @@ void MoleculeCanvas::mouseDown (const juce::MouseEvent& e)
         return;
 
     // --- Left click on a bond: cycle its order ---
-    if (atomHit < 0)
+    if (atomHit < 0 && ! isHalogen (currentElement))
     {
         // Tolerance is expressed in model space, so widen it when zoomed out.
         const float tol = (s > 0.0001f) ? (8.0f * uiScale / s) : 8.0f;
@@ -538,8 +493,11 @@ void MoleculeCanvas::mouseDown (const juce::MouseEvent& e)
 
     dragActive       = true;
     dragSourceAtom   = hitHeavy ? atomHit : -1;
+    if (isHalogen (currentElement) && atomHit >= 0 && molecule.atoms()[(size_t) atomHit].isHydrogen)
+        dragSourceAtom = molecule.atoms()[(size_t) atomHit].parentIndex;
     dragTargetAtom   = -1;
     dragCurrentModel = modelPos;
+    dragCurrentScreen = e.position;
 
     hoveredAtom = -1;
     hoveredBond = -1;
@@ -555,6 +513,7 @@ void MoleculeCanvas::mouseDrag (const juce::MouseEvent& e)
     if (! dragActive)
         return;
 
+    dragCurrentScreen = e.position;
     dragCurrentModel = screenToModel (e.position);
     updateDragValidity();
     repaint();
@@ -565,42 +524,17 @@ void MoleculeCanvas::mouseUp (const juce::MouseEvent& e)
     if (! dragActive)
         return;
 
-    dragActive = false;
-    setMouseCursor (juce::MouseCursor::NormalCursor);
-
-    const auto modelPos = screenToModel (e.position);
-
+    dragCurrentScreen = e.position;
+    dragCurrentModel = screenToModel (e.position);
+    updateDragValidity();
     bool changed = false;
-
-    if (dragSourceAtom < 0)
+    if (dragValid && ! e.mods.isRightButtonDown())
     {
-        // Pressed on empty space: place the element where the pointer lands.
-        changed = (molecule.addAtom (currentElement, modelPos) >= 0);
+        changed = dragTargetAtom >= 0
+            ? molecule.connectAtoms (dragSourceAtom, dragTargetAtom)
+            : molecule.addAtom (currentElement, dragCurrentModel, dragAttachAtom) >= 0;
     }
-    else
-    {
-        const int atomHit = molecule.hitTestAtom (modelPos, 1.0f);
-
-        if (atomHit >= 0 && ! molecule.atoms()[(size_t) atomHit].isHydrogen
-            && atomHit != dragSourceAtom)
-        {
-            // Released on another heavy atom: bond them together.
-            changed = molecule.connectAtoms (dragSourceAtom, atomHit);
-        }
-        else if (molecule.canGrowFrom (dragSourceAtom))
-        {
-            // Released on empty space: grow a new atom outwards from the source.
-            const auto anchor = molecule.atoms()[(size_t) dragSourceAtom].pos;
-            auto outward = modelPos - anchor;
-
-            if (outward.getDistanceFromOrigin() < 1.0f)
-                outward = { 1.0f, 0.0f };
-            else
-                outward /= outward.getDistanceFromOrigin();
-
-            changed = (molecule.addAtom (currentElement, anchor + outward * 60.0f) >= 0);
-        }
-    }
+    cancelDrag();
 
     if (changed)
     {
@@ -619,29 +553,51 @@ void MoleculeCanvas::mouseUp (const juce::MouseEvent& e)
 
 void MoleculeCanvas::updateDragValidity()
 {
-    dragTargetAtom = -1;
-
-    if (dragSourceAtom < 0)
-    {
-        // Placing a fresh atom: valid while the molecule can still accept one.
-        dragValid = molecule.canAddAtom();
+    dragTargetAtom = dragAttachAtom = -1;
+    dragValid = false;
+    dragGhostModel = dragCurrentModel;
+    if (! getLocalBounds().toFloat().contains (dragCurrentScreen))
         return;
+
+    int atomHit = molecule.hitTestAtom (dragCurrentModel, 1.0f);
+    if (isHalogen (currentElement))
+    {
+        if (atomHit >= 0 && molecule.atoms()[(size_t) atomHit].isHydrogen)
+            atomHit = molecule.atoms()[(size_t) atomHit].parentIndex;
+        dragAttachAtom = dragSourceAtom >= 0 ? dragSourceAtom
+            : (atomHit >= 0 ? atomHit : molecule.attachmentIndex (currentElement, dragCurrentModel));
+        dragValid = molecule.canAttach (currentElement, dragAttachAtom);
     }
-
-    // Dragging from an existing atom: either bonding to another atom, or
-    // growing outwards when the pointer is over empty space.
-    const int atomHit = molecule.hitTestAtom (dragCurrentModel, 1.0f);
-
-    if (atomHit >= 0 && ! molecule.atoms()[(size_t) atomHit].isHydrogen
-        && atomHit != dragSourceAtom)
+    else if (dragSourceAtom >= 0 && atomHit >= 0 && ! molecule.atoms()[(size_t) atomHit].isHydrogen
+             && atomHit != dragSourceAtom)
     {
         dragTargetAtom = atomHit;
         dragValid = molecule.canConnect (dragSourceAtom, atomHit);
     }
     else
     {
-        dragValid = molecule.canGrowFrom (dragSourceAtom);
+        dragAttachAtom = dragSourceAtom >= 0 ? dragSourceAtom : molecule.attachmentIndex (currentElement, dragCurrentModel);
+        dragValid = molecule.heavyAtomCount() == 0 || molecule.canAttach (currentElement, dragAttachAtom);
     }
+    if (dragValid && dragAttachAtom >= 0)
+        dragGhostModel = molecule.placementPosition (dragAttachAtom, dragCurrentModel);
+}
+
+void MoleculeCanvas::cancelDrag()
+{
+    dragActive = dragValid = false;
+    dragSourceAtom = dragTargetAtom = dragAttachAtom = -1;
+    hoveredAtom = hoveredBond = -1;
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+bool MoleculeCanvas::keyPressed (const juce::KeyPress& key)
+{
+    if (key != juce::KeyPress::escapeKey || ! dragActive)
+        return false;
+    cancelDrag();
+    return true;
 }
 
 void MoleculeCanvas::mouseMove (const juce::MouseEvent& e)
@@ -690,8 +646,43 @@ void MoleculeCanvas::mouseExit (const juce::MouseEvent&)
     }
 }
 
+// ---------------------------------------------------------------------------
+//  Hover tooltips (v1.1.3)
+// ---------------------------------------------------------------------------
+
+juce::String MoleculeCanvas::getTooltip()
+{
+    if (hoveredAtom >= 0 && hoveredAtom < (int) molecule.atoms().size())
+    {
+        const auto& atom = molecule.atoms()[(size_t) hoveredAtom];
+        const auto& info = elementInfo (atom.element);
+        if (isHalogen (atom.element))
+        {
+            constexpr const char* effects[] { "Comb", "Ring modulation", "Saturation", "Chorus" };
+            return juce::String (info.name) + " - " + effects[(int) atom.element - (int) Element::Fluorine]
+                + ". Right-click to remove.";
+        }
+        if (isHalogen (currentElement))
+        {
+            const int target = atom.isHydrogen ? atom.parentIndex : hoveredAtom;
+            return molecule.canAttach (currentElement, target)
+                ? juce::String ("Replace a carbon-bound hydrogen with ") + elementInfo (currentElement).symbol
+                : juce::String ("Requires a carbon with a replaceable hydrogen");
+        }
+        if (atom.isHydrogen)
+            return info.name;
+        return juce::String (info.name) + " - drag to grow or bond";
+    }
+
+    if (hoveredBond >= 0 && molecule.maxOrderForBond (hoveredBond) > 1)
+        return "Click to cycle bond order";
+
+    return {};
+}
+
 void MoleculeCanvas::clearMolecule()
 {
+    cancelDrag();
     molecule.clear();
     hoveredAtom = -1;
     hoveredBond = -1;
@@ -704,13 +695,11 @@ void MoleculeCanvas::clearMolecule()
     repaint();
 }
 
-void MoleculeCanvas::restoreMolecule (const juce::ValueTree& tree)
+void MoleculeCanvas::restoreMolecule (const juce::ValueTree& tree, bool notify)
 {
-    // Ignore invalid input; leave the current molecule untouched.
-    if (! tree.isValid() || tree.getType() != juce::Identifier ("Molecule"))
+    cancelDrag();
+    if (! molecule.fromValueTree (tree))
         return;
-
-    molecule.fromValueTree (tree);
 
     hoveredAtom = -1;
     hoveredBond = -1;
@@ -718,7 +707,7 @@ void MoleculeCanvas::restoreMolecule (const juce::ValueTree& tree)
     viewScaleTarget = 1.0f;
     modelCentre = { 0.0f, 0.0f };
 
-    if (onMoleculeChanged != nullptr)
+    if (notify && onMoleculeChanged != nullptr)
         onMoleculeChanged();
     repaint();
 }
@@ -735,11 +724,13 @@ void MoleculeCanvas::advanceAnimation (float dt)
     {
         // Relaxation runs in model space and gently re-centres towards the
         // origin, independent of the view transform.
-        molecule.relaxStep (dt);
+        if (! dragActive)
+            molecule.relaxStep (dt);
         molecule.advanceAnimations (dt);
     }
 
-    updateViewScale (dt);
+    if (! dragActive)
+        updateViewScale (dt);
 
     if (hoveredAtom >= 0 || hoveredBond >= 0)
     {

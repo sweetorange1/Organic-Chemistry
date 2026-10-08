@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(OrganicChemistry VERSION 1.1.2 LANGUAGES C CXX)
+project(OrganicChemistry VERSION 1.2.0 LANGUAGES C CXX)
 
 # ===== macOS：双架构 Universal Binary（同时输出 Intel x86_64 与 Apple Silicon arm64）=====
 if(APPLE)
@@ -29,12 +29,12 @@ FetchContent_MakeAvailable(juce)
 option(ORGANIC_COPY_PLUGIN_AFTER_BUILD "Install plugins after building" ON)
 juce_add_plugin(
         OrganicChemistry
-        PRODUCT_NAME "Organic Chemistry"
-        VERSION 1.1.2
+        PRODUCT_NAME "ChemE-Organic Chemistry"
+        VERSION ${PROJECT_VERSION}
         COMPANY_NAME "iisaacbeats.cn"
-        BUNDLE_ID "cn.iisaacbeats.OrganicChemistry"
+        BUNDLE_ID "cn.iisaacbeats.ChemEOrganicChemistry"
         PLUGIN_MANUFACTURER_CODE Isac
-        PLUGIN_CODE OrCh
+        PLUGIN_CODE CE01
         FORMATS VST3 AU Standalone
         IS_SYNTH TRUE
         NEEDS_MIDI_INPUT TRUE
@@ -45,6 +45,13 @@ juce_add_plugin(
 )
 
 juce_generate_juce_header(OrganicChemistry)
+
+if(WIN32)
+    get_target_property(organic_generated OrganicChemistry JUCE_GENERATED_SOURCES_DIRECTORY)
+    get_target_property(organic_info OrganicChemistry JUCE_INFO_FILE)
+    add_custom_command(OUTPUT "${organic_generated}/OrganicChemistry_resources.rc"
+        APPEND DEPENDS "${organic_info}" "${CMAKE_CURRENT_LIST_FILE}")
+endif()
 
 target_compile_definitions(OrganicChemistry
   PUBLIC
@@ -66,6 +73,8 @@ target_sources(OrganicChemistry PRIVATE
   MoleculeAudioMapper.h
   BellEngine.cpp
   BellEngine.h
+  HalogenEffects.cpp
+  HalogenEffects.h
   TestPanel.cpp
   TestPanel.h
   PresetMenu.cpp
@@ -115,4 +124,10 @@ if(ORGANIC_BUILD_BELL_TESTS)
     if(MSVC)
         target_compile_options(OrganicChemistryBellTests PRIVATE /utf-8)
     endif()
+    enable_testing()
+    add_test(NAME OrganicChemistryBellTests COMMAND OrganicChemistryBellTests)
+    set_tests_properties(OrganicChemistryBellTests PROPERTIES
+        ENVIRONMENT "ORGANIC_UPDATE_CHECK_DISABLED=1;IISAAC_TELEMETRY_DISABLED=1"
+        PASS_REGULAR_EXPRESSION "HALOGEN TESTS PASSED"
+        TIMEOUT 180)
 endif()

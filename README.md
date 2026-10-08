@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.2-2A2A28" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.2.0-2A2A28" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/framework-JUCE%208.0.12-orange" alt="JUCE">
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License">
@@ -35,13 +35,13 @@
 ## 预览 / Preview
 
 <p align="center">
-  <img src="readme_1.png" alt="Organic Chemistry — Naphthalene" width="49%">
+  <img src="readme_1.png" alt="Organic Chemistry — Iodomethane" width="49%">
   <img src="readme_2.png" alt="Organic Chemistry — Caffeine" width="49%">
 </p>
 
 <p align="center">
-  <code>左：萘 · 稠环芳香，双环共振 ░ 右：咖啡因 · 四氮杂环，多环稠合</code><br>
-  <em>left: naphthalene, two fused aromatic rings — right: caffeine, a four-nitrogen heterocycle.</em>
+  <code>左：碘甲烷 · 含碘卤代烷 ░ 右：咖啡因 · 四氮杂环，多环稠合</code><br>
+  <em>left: iodomethane, an iodinated alkane — right: caffeine, a four-nitrogen heterocycle.</em>
 </p>
 
 ---
@@ -52,8 +52,8 @@
 |------|---------|
 | **分子编辑器 Molecule editor** | C / O / N / S / P 五种元素，拖拽放置原子、拖拽成键、右键删除 / 断键、点击键循环单 / 双 / 三键，受价键约束，自动补齐氢原子。<br>*5 elements, drag-to-place, drag-to-bond, right-click delete / break bonds, click to cycle single/double/triple, valence-checked with implicit hydrogens.* |
 | **几何力场 Geometry** | VSEPR 键角力场：sp / sp² / sp³ 键角、按元素取实验值（C–S–C 99° 等）、环内多边形内角 + 环模板，分子呈现正确的锯齿与正多边形构象。<br>*VSEPR bond-angle force field with element-specific experimental angles and ring templates.* |
-| **分子识别 Recognition** | Hill 分子式、分子量、凝聚式 / SMILES 结构式、78 种常见物质英文常用名（Benzene、Water、Caffeine …）。<br>*Hill formula, molecular weight, condensed/SMILES structure, 78 common-name recognitions.* |
-| **分子预设 Presets** | 33 种常见有机分子，自绘 3 列卡片面板，`<` `>` 循环切换。<br>*33 common molecules in a self-drawn 3-column card picker.* |
+| **分子识别 Recognition** | Hill 分子式、分子量、凝聚式 / SMILES 结构式、94 种常见物质英文常用名（Benzene、Water、Caffeine …）。<br>*Hill formula, molecular weight, condensed/SMILES structure, 94 common-name recognitions.* |
+| **分子预设 Presets** | 41 种常见有机分子，自绘 3 列卡片面板，`<` `>` 循环切换。<br>*41 common molecules in a self-drawn 3-column card picker.* |
 | **分子 → 声音映射 Mapping** | 21 个化学描述符 → 70 个合成参数，每条映射都有化学依据（芳香环电流 → 乒乓延迟、F=ma → 力度灵敏度、环张力 → 音头弯音等）。<br>*21 chemical descriptors mapped to 70 synth parameters, each with a chemical rationale.* |
 | **合成引擎 Synth engine** | 8 复音 wavetable、每 voice 形态滤波器（key / vel 跟踪 + drive）、梳状共振体、元音共振峰、失真、合唱、混响、乒乓延迟，完整调制系统（ADSR、ENV2、LFO1/LFO2、每音随机、慢漂移）。<br>*8-voice wavetable, per-voice morph filter, comb resonator, formant, distortion, chorus, reverb, ping-pong delay, full modulation matrix.* |
 | **Bell 音色 Bell timbre** | 内置参考音色复刻（三正弦振荡器 Bell voice），可作为开发的起点音色。<br>*Built-in reference bell timbre (three-sine Bell voice) as a starting point.* |
@@ -88,15 +88,10 @@ cmake --build cmake-build-release --config Release
 
 ## 打包安装器 / Packaging
 
-```bash
-# Windows：需要先安装 Inno Setup 6
-build_installer.bat
-# 产物 Output：dist\OrganicChemistry_Setup_1.1.2_x64.exe
+本插件不再单独打包，随 **iisaacbeats Science Series** 系列安装包（同时包含 ChemE-Organic Chemistry / ChemE-Entropy / ChemE-Transcription 三款）统一分发。打包脚本位于工作区根目录：
 
-# macOS：打包通用二进制（x86_64 + arm64）的 pkg / dmg
-./build_installer_mac.sh
-# 产物 Output：dist\OrganicChemistry_Setup_1.0.1_macOS.pkg / .dmg
-```
+- Windows：`build_installer.bat` → `dist\iisaacbeats_ScienceSeries_Setup_<ver>_x64.exe`
+- macOS：`build_installer_mac.sh` → `dist\iisaacbeats_ScienceSeries_Setup_<ver>_macOS.pkg / .dmg`
 
 ---
 

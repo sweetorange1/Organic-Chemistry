@@ -7,6 +7,7 @@
 #include <JuceHeader.h>
 #include "MoleculeAudioMapper.h"
 #include "BellEngine.h"
+#include "HalogenEffects.h"
 
 // ============================================================
 //  MorphFilter — 可连续变形的多模态滤波器（TPT 状态变量结构）
@@ -219,7 +220,8 @@ public:
     /** 由编辑器（UI 线程）调用：保存当前分子拓扑，供 DAW 工程持久化。
 
         处理器持有这份状态并在 getStateInformation 中写出。线程安全。 */
-    void setMolecularState (const juce::ValueTree& tree);
+    bool setMolecularState (const juce::ValueTree& tree);
+    unsigned int molecularRevision() const noexcept { return stateRevision.load(); }
 
     /** 返回最近一次 setMolecularState 保存的分子拓扑（可能为空树）。 */
     juce::ValueTree getMolecularState() const;
@@ -263,6 +265,15 @@ public:
     void setMacro (int index, float value);
 
     // ===== 噪声击打采样库（noise 目录下的瞬态采样）=====
+
+    struct NoiseSampleView
+    {
+        const float* data = nullptr;
+        int length = 0;
+        double sampleRate = 44100.0;
+    };
+    NoiseSampleView getNoiseSampleView() const noexcept;
+    std::array<int, 4> getHalogenCounts() const noexcept;
 
     /** 当前活跃击打采样的 mono 数据指针（仅音频线程读取）。 */
     const float* getNoiseSampleData() const noexcept;
@@ -355,8 +366,17 @@ private:
     std::vector<NoiseSample> noiseLibrary;
     std::atomic<int> activeNoiseIndex { 0 };
 
-    // 分子波表（近正弦，osc_1 使用）。默认 kOsc1Wave，分子变化时更新。
-    WaveTableBuffer moleculeWave;
+    WaveTableBuffer moleculeWave, pendingBellWave {};
+    juce::SpinLock bellWaveLock;
+    bool bellWavePending = false;
+    void consumeBellWave();
+    juce::CriticalSection bellMappingLock;
+    juce::String mappedParent;
+    bool parentMapped = false;
+    organic::HalogenEffects halogenEffects;
+    std::atomic<juce::uint32> halogenCountsPacked { 0 };
+    bool bellWasEmpty = true;
+    void clearBellEffects();
 
     // Bell 效果链：多段压缩 + 降采样。
     organic::MultibandCompressor bellCompressor;
@@ -385,6 +405,7 @@ private:
     // getStateInformation 读取。用 CriticalSection 保护。
     juce::CriticalSection molecularStateLock;
     juce::ValueTree molecularState;
+    std::atomic<unsigned int> stateRevision { 0 };
 
     // ===== 效果链 =====
     // 低切：高通 StateVariableTPT 滤波器（12 dB/oct）

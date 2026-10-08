@@ -10,21 +10,25 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`Organic Chemistry`（版本 `1.1.2`）
-- **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。核心是一个复刻 Vital「BELL Reflections」预设的三正弦钟声引擎；用户在界面中"搭建分子"，分子的规范 SMILES 经确定性哈希映射到 Bell 引擎的 33 个参数——**分子即预设**。
+- **产品名**：`ChemE-Organic Chemistry`（版本 `1.2.0`）。自 1.1.3 起全系列统一加 `ChemE-` 前缀；宿主显示名与 VST3 包名随之为 `ChemE-Organic Chemistry.vst3`，CMake target 仍为 `OrganicChemistry`，产物目录 `OrganicChemistry_artefacts` 不变。
+- **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。现有 Bell 钟声底色由母体结构的确定性哈希生成；v1.1.4 起，含卤结构先在图上去除 F/Cl/Br/I 并补回氢，再用母体生成波表、Bell 参数和击打采样。四类卤素只驱动各自的定向效果，不重新随机化母体底色（详见 §14）。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
   - **Windows**：`VST3` + `Standalone`
   - **macOS**：`VST3` + `Standalone` + `AU`
-  - **BundleID**：`cn.iisaacbeats.OrganicChemistry`，PluginCode `OrCh`
+  - **BundleID**：`cn.iisaacbeats.ChemEOrganicChemistry`，PluginCode `CE01`（自 1.1.3 起更换；VST3 UID 由厂商码 + 插件码派生，更换后新旧插件在宿主中视为两个独立插件，旧工程仍加载已安装的旧插件，不受影响）
 - **视觉方向**：**亮白极简医疗风**（clinical minimal）。白底、细描边、低饱和 CPK 元素配色、克制的呼吸动画。与作者其它插件（Y2KMeter 的 Pink XP 像素风、Pupon / CRTLoss 的地下失真风）刻意区分。
 
 ### 1.2 当前阶段与主要功能
 
-**已完成（v1.1.2）**：
+**已完成（v1.2.0）**：
+- **卤素扇形轮盘**：底栏新增 `X / Halogens`，按住后以卤素槽为中心向上展开半圆扇形轮盘，从左到右依次 F/I/Br/Cl（各占一块扇形圆环）；滑向选项松手选择，随后在画布连续添加；中心/外部松手、Escape、失焦、窗口隐藏/缩放均可取消，不穿透到画布。
+- **合法 C–X 取代与定向声音**：仅允许中性一价卤素单键连接有可替代氢的碳；可重复/混合取代，F=跟随音高的梳状共振（基频=演奏频率，随数量增强强度与增益）、Cl=跟随音高的环形调制（2:1 谐波，修复跑调）、Br=带响度补偿的饱和失真、I=合唱，保留母体底色。原子/键、质量、结构文字、状态往返均已接通，详见 §14。
+- **标题带（系列统一）**：顶栏下方左侧新增与 Transcription 同格式的两行大标题（小号眉题 `01 / ORGANIC CHEMISTRY` + 27px `Organic Chemistry`），标题带高 80 设计像素，画布与元素栏从其下方（y=126，与 Transcription 画布起点一致）开始（v1.1.3）
+- **全界面鼠标悬停提示**：顶栏、画布与元素栏均提供英文悬停提示（TooltipWindow + TooltipClient，白底细线样式），提示内容对照见 §6.5（v1.1.3）
 - **顶栏分隔线固定绘制**：分隔线改由独立顶层组件绘制，展开 REACTION 面板时不再被其白色填充盖住半条线而变淡变细（v1.1.2）
 - **编辑器窗口大小持久化**：宿主不记录插件经 resizeView 程序化改动的窗口大小，现仿照 Entropy 自持久化——`processor.editorWidth` 随工程保存/恢复，重开界面时窗口大小保持（v1.1.2）
-- 底部元素栏选择 C / O / N / S / P
+- 底部元素栏选择 C / O / N / S / P，另有 `X / Halogens` 四选项轮盘（F / Cl / Br / I）
 - 画布**按下拖拽放置原子**：按下显示虚影（ghost），松手才落子
 - 从一个原子**拖到另一个原子**成键连接（受价键约束，无法连接的不支持）
 - 右键删除原子，**断链后只保留最大片段**（画布恒为单一分子）
@@ -35,10 +39,10 @@
 - 画布左下角显示结构式：无环用**凝聚式**（如 `CH3-CH2-OH`），含环用 **SMILES 环结构式**（如 `C1=CC=CC=C1`）
 - 识别**常见物质**并在左下角显示英文**常用名**（如 Benzene / Water / Carbon dioxide）
 - 窗口右下角拖动**等比缩放**整个界面（50 % ~ 200 %）
-- **顶栏分子预设**：点击分子式展开**自绘**的预设面板（3 列 × 33 种常见有机分子，含分子式），
+- **顶栏分子预设**：点击分子式展开**自绘**的预设面板（3 列 × 41 种常见有机分子，含分子式），
   左右 `<` `>` 循环切换（见 §7.9）
-- **常用名识别 78 种**：预设 33 + 扩展 45，名字表由拓扑在运行时反算规范 SMILES 自动建立（见 §7.10）
-- **画布为空时静音**：没有分子就没有音色，输出被 12 ms 平滑门压到零并掐掉发声中的音符
+- **常用名识别 94 种**：预设 41 + 扩展 53，名字表由拓扑在运行时反算规范 SMILES 自动建立（见 §7.10）
+- **画布为空时静音**：实际 Bell 路径清零输出并终止音符；v1.1.4 同时清理卤素、合唱、延迟和混响状态，重新添加分子不会复活旧尾音。旧 12 ms 门属于未执行的历史路径，不应视为当前行为。
 - **VSEPR 键角力场**：键长弹簧 + 角弯曲 + 1-2/1-3 排除的非键斥力，烷烃链呈现正确的 112° 锯齿而非直线（见 §7.5）
 - **sp³ 键角按元素取实验值**：C/N/O/S/P 各不相同（C–S–C 只有 99°，画出来明显比碳链尖），
   不再是一刀切的 109.5°（见 §7.5.3b）
@@ -89,8 +93,8 @@
 
 ### 1.5 分子 → Bell 音色映射（调试速查）⭐⭐
 
-> **这一节是调音的唯一入口。** 想改某个分子对应的听感，先去 `BellEngine.cpp::mapMoleculeToBellParams()`
-> 改那一行。全部 33 个 Bell 参数 + 4 个宏在此列全。DSP 实现见 §9，化学描述符见 §7.7。
+> 本节描述 **Bell 母体底色** 的历史映射。调整母体请看 `BellEngine.cpp::mapMoleculeToBellParams()`；v1.1.4 的卤素定向效果独立位于 `HalogenEffects.cpp`（§14），不在旧 `MoleculeAudioMapper` 的梳状滤波里。
+> 下方数据流中的 `Molecule` 自 v1.1.4 起指 `withoutHalogens()` 返回的去卤补氢母体；原结构的 `halogenCounts()` 另外驱动 F→Cl→Br→I 效果链。旧无卤母体的哈希算法保持不变。
 
 #### 1.5.1 数据流
 
@@ -114,8 +118,7 @@ Molecule（画布拓扑）
 
 #### 1.5.2 手动锁定
 
-当前**没有**手动锁定入口：全部 33 个 Bell 参数（含 ADSR 的 Attack/Decay/Release，Sustain 固定 0）
-完全跟随分子 SMILES 哈希。`EnvelopePanel` 组件文件已写好但尚未接线/编译（见 §2）。
+当前没有全音色锁定开关；ADSR 已由 REACTION 旋钮和宿主参数独立控制，分子变化不覆盖它们（见 §13）。v1.1.4 的“母体底色”由去卤拓扑派生，不是保存添加前声音的历史快照；同一母体中增删卤素不改变其 Bell 参数、波表和击打采样。`EnvelopePanel` 图形编辑器仍未接线。
 
 #### 1.5.3 声源（三个正弦振荡器）
 
@@ -211,12 +214,11 @@ I:\Organic Chemistry\
 ├── ui/                         更新弹窗（白底医疗风）
 ├── shared/IisaacTelemetry.h    header-only 每日匿名遥测
 ├── noise/                      噪声击打采样库（120 个 wav/aif）
-├── build_installer.bat         Windows 安装器打包（Inno Setup）
-├── build_installer_mac.sh      macOS 安装器打包（Universal pkg/dmg）
-├── organic_chemistry_installer.iss   Inno Setup 安装脚本
 ├── cmake-build-ninja/          Ninja 构建目录
 └── cmake-build-release-visual-studio/   VS 构建目录
 ```
+
+> 独立安装器脚本（原 `build_installer.bat` / `build_installer_mac.sh` / `organic_chemistry_installer.iss`）已删除。本插件只随系列大安装包分发：打包入口在工作区根目录 `i:/理科系列/build_installer.bat`（Windows Inno Setup）与 `build_installer_mac.sh`（macOS pkg/dmg），产物 `i:/理科系列/dist/iisaacbeats_ScienceSeries_Setup_<ver>_x64.exe`。
 
 ### 2.1 分层架构
 
@@ -464,6 +466,28 @@ Bell 音色引擎：`BellVoice`（三正弦振荡器 + 包络 + 低通 + 噪声�
 
 > `MoleculeAudioMapper.h/.cpp` 现在是历史遗留：只保留 `kWaveTableSize`、`WaveTable`、`kOsc1Wave` 等类型/常量定义，旧的 `mapMoleculeToAudio()`/`buildWaveTable()` 已不再被调用。
 
+### 6.5 悬停提示对照表（v1.1.3 新增）⭐
+
+本版为全部交互区域加入英文鼠标悬停提示（约 0.65 s 延迟）。机制为 `juce::TooltipWindow`（成员 `tooltip`，白底细线样式由内嵌 `TooltipLookAndFeel` 单独提供，不影响其它自绘组件）+ 各组件实现 `juce::TooltipClient::getTooltip()` 动态返回。JUCE 8 中 TooltipWindow 只查询鼠标正下方组件（`TooltipClient`），不会向父组件遍历，因此编辑器、画布、元素栏各自实现；提示文本全部为纯 ASCII，避免窄字面量编码问题。
+
+| 组件 / 区域 | 条件 | 提示内容 | 实现位置 |
+|---|---|---|---|
+| 网址 `iisaacbeats.cn` | 悬停 | `Visit iisaacbeats.cn` | `PluginEditor::getTooltip()` |
+| 顶栏分子式 / `Presets` | 悬停 | `Molecule presets` | 同上 |
+| `<` 箭头 | 悬停 | `Previous preset` | 同上 |
+| `>` 箭头 | 悬停 | `Next preset` | 同上 |
+| 右上 `Clear` | 悬停（MOLECULE 且有分子） | `Clear the molecule` | 同上 |
+| 右上 `Reset` | 悬停（REACTION 展开） | `Reset ADSR to defaults` | 同上 |
+| 画布重原子 | 悬停原子 | `{元素名} - drag to grow or bond`（如 `Carbon - drag to grow or bond`） | `MoleculeCanvas::getTooltip()` |
+| 画布氢原子 | 悬停原子 | `Hydrogen`（仅标识，氢不可操作） | 同上 |
+| 画布化学键 | 悬停且键级可提升（`maxOrderForBond > 1`） | `Click to cycle bond order` | 同上 |
+| `MOLECULE` 页签 | 悬停 | `Build a molecule` | `ElementBar::getTooltip()` |
+| `REACTION` 页签 | 悬停 | `Envelope controls` | 同上 |
+| 元素色块 C/O/N/S/P | 悬停（MOLECULE 模式） | `Carbon` / `Oxygen` / `Nitrogen` / `Sulfur` / `Phosphorus` | 同上 |
+| ADSR 旋钮 ×4 | 悬停（REACTION 展开） | `Attack (Temperature)` / `Decay (Pressure)` / `Sustain (Yield)` / `Release (Mass)` | 同上 |
+
+不提供提示的区域：版本号、分子量、波形预览、预设面板卡片（卡片自身已显示名称与分子式）、缩放角标、拖拽过程中的画布（按住鼠标时提示自动隐藏）。
+
 ---
 
 ## 7. 化学知识来源与代码对照 ⭐
@@ -482,6 +506,12 @@ Bell 音色引擎：`BellVoice`（三正弦振荡器 + 包络 + 低通 + 噪声�
 | S 硫 | 2 | 32.060 | `#D9A63A` 芥黄 | 16.5 |
 | P 磷 | 3 | 30.974 | `#CE7A3C` 赭橙 | 16.0 |
 | H 氢 | 1 | 1.008 | `#B8B8B8` 浅灰 | 7.5 |
+| F 氟 | 1 | 18.998 | `#5C9472` 低饱和绿 | 13.0 |
+| Cl 氯 | 1 | 35.450 | `#72A15A` 低饱和黄绿 | 16.0 |
+| Br 溴 | 1 | 79.904 | `#98524A` 红棕 | 17.5 |
+| I 碘 | 1 | 126.904 | `#8065A0` 紫 | 19.0 |
+
+v1.1.4 新增四种卤素：价电子数均为 7，Pauling 电负性分别为 3.98 / 3.16 / 2.96 / 2.66；只支持中性 C–X 单键取代（详见 §14.2）。原子量用于平均分子量显示，绘图半径仍为视觉像素而非真实长度。四种音效的对应关系是用户确认的声音设计，**不是由电负性或原子量推导的分子声学定律**。
 
 **来源与依据**：
 
@@ -1194,12 +1224,14 @@ v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」�
 | **加新化学描述符** | `MoleculeModel.h` 的 `ChemicalDescriptors` + `computeDescriptors()`，并在 §7.7 补文献出处 |
 | 改动画速度 | 各 `advanceAnimation()` 里的 `dt * 系数`（见 §4.2 表） |
 | 改配色 / 视觉风格 | `MoleculeCanvas.cpp` 顶部匿名 namespace 的颜色常量 |
-| 改布局尺寸 | `PluginEditor.cpp` 顶部的 `kTopBarHeight` / `kBottomBarHeight` 等常量 |
+| 改布局尺寸 | `PluginEditor.cpp` 顶部的 `kTopBarHeight` / `kTitleBandHeight` / `kBottomBarHeight` 等常量 |
+| 改标题带文案/样式 | `PluginEditor::paint()` 中 "01 / ORGANIC CHEMISTRY" 与 "Organic Chemistry" 两行 |
 | 改缩放范围 | `PluginEditor` 构造函数的 `constrainer.setSizeLimits()` |
 | 改 auto-fit 松紧 | `MoleculeCanvas.cpp` 的 `kFitPadding`（当前 24 px）与 `viewScaleTarget` 的 clamp 下限 |
 | 改结构式格式 | `Molecule::structuralFormula()`（无环）+ `ringStructuralFormula()`（含环） |
 | 改/加常见物质常用名 | `MoleculeModel.cpp` 的 `kCommonSubstances[]` 表 |
 | 改常用名显示样式 | `MoleculeCanvas::paintStructuralFormula()` 的 `COMMON NAME` 分支 |
+| 改/加悬停提示文案 | 顶栏：`PluginEditor.cpp` 的 `getTooltip()`；画布原子/键：`MoleculeCanvas.cpp` 的 `getTooltip()`；页签/元素/旋钮：`ElementBar.cpp` 的 `getTooltip()`（提示清单见 §6.5） |
 | 调音色映射规则 | `BellEngine.cpp` 的 `mapMoleculeToBellParams()`（见 §9.2） |
 | 改效果链结构 | `PluginProcessor.cpp` 的 `processBellBlock()` + 成员声明 |
 
@@ -1209,6 +1241,9 @@ v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」�
 
 | 版本 | 内容 |
 | --- | --- |
+| **1.2.0** | **卤素效果重调 + 扇形轮盘。** ① 声音设计：F 梳状共振改为跟随音高（延迟 = 1/基频，随数量同时增强强度与增益）；Cl 环形调制调制频率改为 2×音高（2:1 谐波，边带落在基频与 3 次谐波），修复原固定 173 Hz 导致的跑调；Br 饱和追加随数量的响度补偿；I 由弥散回声换成三声部合唱。② 去除顶栏卤素计数展示。③ 轮盘由圆形四象限改为以卤素槽为中心向上展开的半圆扇形圆环（内 46 / 外 112 设计像素），从左到右 F/I/Br/Cl；中心固定到卤素槽位置（原为鼠标按下点）；扇形盘不透明、非扇形区域半透明遮罩调低（0.4）；修复 hover 块与相邻块共享半径边被后绘浅色边框覆盖导致的一条边不点亮（两遍绘制）。④ 新增 8 个含卤素预设（Fluorobenzene / Chlorobenzene / Bromobenzene / Iodobenzene / Chloroform / Carbon tetrachloride / Methylene chloride / Tetrafluoroethylene）与 8 个含卤素常用名识别（Fluoromethane / Chloromethane / Bromomethane / Iodomethane / Ethyl chloride / Vinyl chloride / Iodoform / Dichlorodifluoromethane），预设 33→41、命名 78→94。详见 §14。 |
+| **1.1.4** | 新增 X/Halogens 四选项轮盘、合法 C–X 取代、母体底色加 F/Cl/Br/I 四种定向效果与数量叠加；同步分子显示、状态恢复与英文提示。修复新路径涉及的锚点/补氢索引、结构式分支、波表发布和采样读取一致性，以及清空后的声部/尾音复活。Bell 回归正式接入构建，含化学、音频、交互和多缩放原生预览；详见 §14。插件身份不变，系列包保持 1.2.0。 |
+| **1.1.3** | **全界面鼠标悬停提示。** 新增 `juce::TooltipWindow`（白底细线 `TooltipLookAndFeel`，约 0.65 s 延迟），编辑器、`MoleculeCanvas`、`ElementBar` 均实现 `juce::TooltipClient::getTooltip()` 动态返回英文提示：顶栏（网址/预设簇/箭头/Clear-Reset）、画布（原子元素名 + 拖拽成键/生长提示、可升键级的键切换提示）、元素栏（页签用途、元素全名、ADSR 旋钮的化学隐喻对照）。提示清单见 §6.5。构建 `BUILD_OK`。**全系列改名**：显示名改为 `ChemE-Organic Chemistry`，Bundle ID `cn.iisaacbeats.ChemEOrganicChemistry`、Plugin Code `CE01`；新身份与旧插件（`OrCh`）UID 不同、VST3 包名不同，可共存；系列安装包使用独立 AppId，安装/卸载不会触碰旧版已安装插件 |
 | **1.1.2** | **UI 修复 × 2。** ① 顶栏底部分隔线改由独立顶层组件 `TopHairline` 绘制（添加顺序在 elementBar 之后），修复切换页签时 REACTION 面板展开被 `fillAll(white)` 盖住半条线导致的"变淡变细"。② 编辑器窗口大小自持久化（仿 Entropy）：`processor.editorWidth` 原子量 + 编辑器 `resized()` 实时写入 + `timerCallback` 每帧拉回 + `getStateInformation`/`setStateInformation` 随工程保存恢复，修复宿主不记录插件窗口大小、每次打开界面被重置的问题 |
 | **1.1.1** | **bug 修复：修复 Yield（Sustain）旋钮 100% 时延音消失。** 根因是 `BellVoice` 包络状态机缺失 sustain 态：sustain=1.0 时 decay 首帧即达平台并立即转入 release，延音平台不存在。修复：恢复 `EnvState::sustain`，decay 到达 sustain 后停住、note-off 才 release；sustain=0 时保持原钟声行为 |
 | **1.1.0** | **ADSR 控制器 + 反应页签。** ① 底部元素栏新增 MOLECULE / REACTION 页签，切到 REACTION 后元素色块动画过渡为 4 个 ADSR 旋钮（化学隐喻包装：Temperature→Attack、Pressure→Decay、Yield→Sustain、Mass→Release），支持拖拽 + 双击输入精确值。② ADSR 与分子映射解绑，包络不再随分子结构变化。③ ADSR 参数接入 `AudioProcessorValueTreeState`，支持宿主自动化 / MIDI CC / 工程持久化（新状态格式兼容旧工程）。④ 修复分子模式画布被页签白条遮挡、右上角 Clear/Reset 文案需悬停才刷新两个问题 |
@@ -1308,6 +1343,97 @@ cutoffHz = filterCutoff × 2^(keytrackCents/12) × 2^(env2ToFilter·env2·4/12)
 | `BellEngine.cpp` | ADSR 与分子解绑 |
 | `MoleculeCanvas.cpp/.h` | 分子名贴底边 + `onPointerDown` |
 | `EnvelopePanel.h/.cpp` | ADSR 图形编辑器（新增，未接线） |
+
+---
+
+## 14. 含卤取代基与定向效果（v1.1.4 引入，v1.2.0 重调效果与轮盘，2026-10-08）
+
+本节描述用户已确认并实现的首版规则。旧章节中将所有原子变化都描述为“重新随机化整个音色”的内容，对卤素取代不再适用。
+
+### 14.1 轮盘与放置
+
+- 原 C/O/N/S/P 不变，在后面增加 `X / Halogens` 类别；选过卤素后圆点显示其具体符号，类别名仍为 `Halogens`。
+- **按住左键 → 以卤素槽为中心向上展开半圆扇形轮盘 → 滑向选项 → 松手确认工具**。随后另一次画布手势添加，当前工具保持选中，可连续添加；轮盘松手不会直接向画布落子。
+- 四扇区（从左到右 F/I/Br/Cl）各占一块扇形圆环（内半径 46 / 外半径 112 设计像素，上半 180° 均分），显示元素符号、英文全名及效果名：F / Fluorine / Comb，I / Iodine / Chorus，Br / Bromine / Saturation，Cl / Chlorine / Ring mod。
+- 原子栏转发已捕获的 drag/up，轮盘是 Editor 直属全窗口遮罩，优先向上展开并适配 50%–200% 缩放；不使用独立桌面窗口或额外动画定时器。扇形盘底不透明，非扇形区域为半透明遮罩（0.4）。
+- 中心或轮盘外松手、短点后松手、Escape、失焦、切页、加载预设、隐藏或缩放窗口均不会误添加。轮盘还支持方向键、Enter 选择。
+- 选好后可点击碳或其自动氢，或从碳拖出新卤素；从空白处放置时选择最近的合法碳位。指定无效原子时不会偷偷转接到别处。灰色 ghost 表示不合法，画布外松手取消。
+- 预览与提交共用 `placementPosition()` 和 `canAttach()`；放置过程中暂停分子松弛和视图缩放，避免锚点漂移。
+- 普通原子键编辑方式保留；卤素工具下的左键不再顺带切换母体键级。（v1.2.0 起移除标题带上的卤素数量展示）
+
+### 14.2 基础化学与结构数据
+
+- 新枚举接在旧 H=5 之后：F=6、Cl=7、Br=8、I=9，旧 C/O/N/S/P/H 编号不变；`Halogens` 是 UI 类别，不是假原子。
+- 每个 X 中性一价，只允许 **C–X 单键**，取代时消耗该碳的一个自动氢；支持烷基、烯基、炔基及芳香碳上的合法位点。碳总键级不得超过 4，X 不得第二次成键。
+- 空画布不能放 X，需先建立含碳结构；首版不支持 N/O/S/P–X、游离卤离子、自由基、超价卤素或多原子片段。这里不模拟实际卤化反应机理或合成条件。
+- 可在同一碳上多次取代至余价用尽，也可在不同碳上重复或混合添加。整个分子上限为 512 个重原子，避免异常状态造成无限布局开销。
+- 自动补氢、平均分子量、Hill 分子式、双字母 Cl/Br 标签和二维布局支持新元素。VSEPR 仍是二维示意，不是三维构象或能量优化。
+- `addAtom()` 返回补氢压紧后的正确重原子索引，并支持显式锚点。删除碳或 C–X 键后会去除游离 X，不能留下不符合首版规则的 HX；其余断链仍按最大片段规则处理。
+- 凝聚式递归包含侧链；环结构显示修正了分支归属和闭环键级。新增含卤结构使用修正的结构 writer；旧无卤 `canonicalSmiles()` 保留原算法以保护音色，不应把它当成完整、严格图同构不变的标准 SMILES 交换器。
+
+### 14.3 母体底色与声音设计
+
+`Molecule` → `withoutHalogens()`（剥离末端 X，保持剩余重原子相对顺序，补氢）→ 母体字符串 → 现有 Bell 参数、OSC1 波表、击打采样。
+
+原分子的 `halogenCounts()` 则单独驱动 `HalogenEffects`。同一母体只增删 X 时，基础参数/波表/采样不变；ADSR 始终来自现有独立控制器。不存在依赖添加历史的“锁音色快照”。
+
+有效处理顺序：**Bell 声部 → 原多段压缩 → F → Cl → Br → I（合唱）→ 原合唱/延迟/混响/降采样 → 原 tanh 输出保护**。四模块是总线效果，不按“最后一个 MIDI 音符”重调整个和弦；无对应 X 时该模块旁通。
+
+| 取代基 | 实际算法 | 随数量变化 |
+| --- | --- | --- |
+| F | 带阻尼的反馈梳状共振，延迟跟随音高（= 采样率 / 基频，即一个基频周期，最低 30 Hz），阻尼约 5.2 kHz | 干湿、反馈与整体增益增强；反馈低于 0.80 |
+| Cl | 环形调制，调制频率跟随音高（2×基频，2:1 谐波），保留部分原信号，作能量补偿 | 调制混入增强，边带落在基频与 3 次谐波，不再跑调 |
+| Br | tanh 饱和，采用一阶反导数抗混叠（ADAA）、增益补偿和 DC 处理 | drive 与混入增强；随数量略微降低输出响度 |
+| I | 三声部调制延迟合唱（8/12/16 ms，LFO ±2.5 ms @ 0.6 Hz，声部相位差 120°） | 合唱混入增强 |
+
+对每种元素分别取数量 \(n\)，强度为 \(1-e^{-0.7\min(n,8)}\)，数量为零时严格为零；所有目标采用约 40 ms 线性平滑。同类从 1 到多次逐渐增强，第 8 个以后效果封顶，但模型仍可在合法余价内继续添加、显示真实数量。不同种类按上表固定顺序组合，不按添加顺序排列；组合效果不等于响度线性叠加。
+
+这些映射是用户选择的实验性声音设计，**不是卤素真实分子的声学规律**。ADAA 降低饱和混叠但不承诺完全无混叠；信号差异测试不代替听感验收。
+
+### 14.4 状态、实时安全与兼容
+
+- `Molecule.schemaVersion=2`，保存稳定元素整数及重原子键；`OrganicChemistryState.mappingVersion=2`。外层继续使用原 UTF-8 XML 格式和现有四个 APVTS 参数 ID；不新增每个基团的宿主参数。
+- 恢复仍接受无版本的合法旧 `Molecule` 或旧外层状态。先校验元素白名单、端点、唯一键、价态、C–X 规则、连通性和规模，失败不覆盖当前模型；未知映射版本拒绝。
+- 参数 ID、`CE01`、Bundle ID 和 ChemE 文件名保持不变。新版本能读取合法旧工程；旧二进制不理解新的卤素编号，**不要用旧版打开含卤素的新工程**。早期未改名 `OrCh` 插件继续由安装器的共存策略保留。
+- 效果计数由拓扑派生，一次打包发布；`HalogenEffects` 的延迟资源只在 `prepare()` 分配。处理时不访问分子图，不创建滤波器。
+- 母体波表通过非等待 try-lock 在块边界复制；音符锁存同一击打采样的数据/长度/采样率，避免独立索引读取不一致。Bell 滤波器在 prepare 阶段准备。
+- 清空时停止声部并清理效果历史；修正已清除的 Bell 声部仍推进包络、重新发声的问题。移除单类 X 平滑退出该模块；已有公共合唱/混响尾音可自然释放。
+- 无 Editor 也能恢复并发声；已打开 Editor 用状态修订号同步画布，恢复时不把旧画布反写到 Processor。关闭轮盘或 Editor 不负责释放正常演奏中的音符。
+
+### 14.5 新增提示文案
+
+| 位置/条件 | 文案 |
+| --- | --- |
+| X / Halogens 入口 | `Hold, slide and release to choose a halogen` |
+| 轮盘未选扇区 | `Slide to a halogen / Esc to cancel` |
+| 轮盘有效扇区 | `Release to select` |
+| 空画布且卤素工具激活 | `Build a carbon skeleton first` |
+| 卤素工具下的合法碳/氢 | `Replace a carbon-bound hydrogen with F`（末尾依选中项为 F/Cl/Br/I） |
+| 卤素工具下的非法位点 | `Requires a carbon with a replaceable hydrogen` |
+| 已有 F | `Fluorine - Comb. Right-click to remove.` |
+| 已有 Cl | `Chlorine - Ring modulation. Right-click to remove.` |
+| 已有 Br | `Bromine - Saturation. Right-click to remove.` |
+| 已有 I | `Iodine - Chorus. Right-click to remove.` |
+
+### 14.6 文件与验证
+
+| 文件 | 本轮职责 |
+| --- | --- |
+| `MoleculeModel.h/.cpp` | 卤素属性、合法锚点、去卤母体、计数、图校验与显示表示 |
+| `ElementBar.h/.cpp` | X 类别、`HalogenWheel`、按住滑动松开选择 |
+| `MoleculeCanvas.h/.cpp` | 合法 ghost、指定碳取代、取消/连续添加和英文提示 |
+| `PluginEditor.h/.cpp` | 弹层管理、状态同步、标题数量、原生测试帧推进 |
+| `HalogenEffects.h/.cpp` | 四类固定资源 DSP、计数曲线、平滑、有限值保护 |
+| `PluginProcessor.h/.cpp`、`BellEngine.h/.cpp` | 母体映射、实时交接、效果接入、状态、声部生命周期 |
+| `BellTests.cpp`、`CMakeLists.txt`、`build.ps1` | 回归、原生预览、构建与 CTest 接线 |
+
+- Windows `build.ps1` 已构建 VST3 / Standalone 并运行 `OrganicChemistryBellTests`，成功标志为 exit 0、`HALOGEN TESTS PASSED` 与 `BUILD_OK`。
+- 回归覆盖全部工厂预设及 132 个含卤变体往返、C–X/价态/无效图拒绝、母体参数/波表/采样/ADSR 保持、无 UI 和已打开 UI 恢复、轮盘取消/不穿透、连续添加、50%/100%/200% 缩放、并发发布、清空不复活。
+- DSP 覆盖四类/多次/混合效果、单样本与 257 样本分块一致性、8–384 kHz 代表采样率、mono/stereo、极端计数及非有限输入；另用实际 Bell 输出比较母体、各类单次/三次和混合取代。当前不是完整实时分配分析或长时 CPU 基准。
+- `build.ps1` 固定启用 Bell 测试；旧 `AudioTests.cpp` 面向已弃用的 wavetable 标定链，本轮不作为 Bell 的验收目标。测试通过环境变量禁用更新检查和遥测，不改变正常插件默认行为。
+- 测试程序支持 `--snapshots`，输出 `Preview/Halogen-wheel-410.png`、`Halogen-wheel-820.png`、`Halogen-wheel-1640.png` 和 `Halogen-molecule.png`；已检查原生排版。
+- `--audio-preview` 输出 `Preview/Halogen-audio-comparison.wav`（48 kHz / 24-bit / stereo）。每段 2 秒，顺序为母体、F×1、F×3、Cl×1、Cl×3、Br×1、Br×3、I×1、I×3、四类各一个。
+- 尚未验证实际 DAW 安装/宿主交互、最终听感、macOS/AU；不把离线测试和截图等同于这些验收。系列安装包维持用户指定的 **1.2.0**，本轮 Organic 独立版本 **1.1.4 → 1.2.0**。
 
 ---
 

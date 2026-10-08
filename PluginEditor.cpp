@@ -21,6 +21,7 @@ constexpr float kVersionFontSize = 11.5f;
 constexpr float kVersionMarginX  = 8.0f;
 
 constexpr float kTopBarHeight    = 46.0f;
+constexpr float kTitleBandHeight = 80.0f;   // 标题带：顶栏下的眉题 + 大标题（与 Transcription 同格式同高度）
 constexpr float kBottomBarHeight = 92.0f;   // 元素栏总高：72 元素/旋钮行 + 20 页签条
 constexpr float kChipRowHeight   = 72.0f;   // 元素/旋钮行高度（色块与旋钮共用，保持分界线一致）
 
@@ -55,6 +56,27 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
         applyPreset (index);
     };
     presetMenu.onDismiss = [this] { hidePresetMenu(); };
+    addChildComponent (halogenWheel);
+    elementBar.onHalogenPress = [this] (const juce::MouseEvent&)
+    {
+        hidePresetMenu();
+        canvas.cancelDrag();
+        tooltip.hideTip();
+        halogenWheel.setBounds (getLocalBounds());
+        // 扇形中心固定到卤素槽中心，而非鼠标按下位置。
+        const auto anchor = getLocalPoint (&elementBar, elementBar.halogenBounds().getCentre());
+        halogenWheel.open (anchor, uiScale());
+    };
+    elementBar.onHalogenDrag = [this] (const juce::MouseEvent& event)
+    {
+        halogenWheel.track (event.getEventRelativeTo (&halogenWheel).position);
+    };
+    elementBar.onHalogenRelease = [this] (const juce::MouseEvent& event)
+    {
+        halogenWheel.release (event.getEventRelativeTo (&halogenWheel).position);
+    };
+    halogenWheel.onChosen = [this] (organic::Element element) { elementBar.setSelected (element); };
+    halogenWheel.onDismissed = [this] { elementBar.cancelHalogenGesture(); };
 
     elementBar.onElementChosen = [this] (organic::Element e)
     {
@@ -65,6 +87,8 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
     // 反应剖面页签：展开/收起时重排布局，并刷新顶部按钮文案（Clear/Reset）。
     elementBar.onToggleExpanded = [this]
     {
+        halogenWheel.dismiss();
+        canvas.cancelDrag();
         resized();
         repaint();
     };
@@ -84,13 +108,10 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
         // 分子拓扑变化 → 波形 + 效果参数（自动参数跟随映射，手动参数保留）。
         applyMoleculeToAudio();
 
-        repaint (0, 0, getWidth(), (int) (kTopBarHeight * uiScale()) + 2);
+        repaint (0, 0, getWidth(), (int) ((kTopBarHeight + kTitleBandHeight) * uiScale()) + 2);
     };
 
     canvas.setCurrentElement (elementBar.getSelected());
-
-    // 波形预览：显示当前分子 wavetable（静态单周期波形）。
-    canvas.previewWaveProvider = [this] { return processor.getPreviewWave(); };
 
     // 点击画布时提交正在进行的旋钮输入框。
     canvas.onPointerDown = [this] { elementBar.commitKnobEdit(); };
@@ -148,6 +169,9 @@ OrganicChemistryAudioProcessorEditor::OrganicChemistryAudioProcessorEditor (Orga
     setSize (savedWidth,
              juce::roundToInt ((float) savedWidth * (float) kDesignHeight / (float) kDesignWidth));
 
+    // 悬停提示窗口使用白底细线样式（不影响其它自绘组件）。
+    tooltip.setLookAndFeel (&tooltipLaf);
+
     startTimerHz (60);
 
     telemetrySession = std::make_unique<iisaac::telemetry::Session> (
@@ -181,8 +205,10 @@ void OrganicChemistryAudioProcessorEditor::applyMoleculeToAudio()
     const auto& mol = canvas.getMolecule();
 
     // 保存分子拓扑 + 映射到音频（处理器侧：波形 / Bell 参数 / 采样 / 静音）。
-    processor.setMolecularState (mol.toValueTree());
+    if (! processor.setMolecularState (mol.toValueTree()))
+        return;
     processor.applyMolecularStateToAudio();
+    displayedRevision = processor.molecularRevision();
 
     // 刷新反应剖面（ADSR）显示（ADSR 与分子解绑，读取处理器当前包络）。
     elementBar.setEnvelopeValues (
@@ -199,6 +225,15 @@ void OrganicChemistryAudioProcessorEditor::applyMoleculeToAudio()
 void OrganicChemistryAudioProcessorEditor::timerCallback()
 {
     constexpr float dt = 1.0f;   // one frame
+    const auto revision = processor.molecularRevision();
+    if (displayedRevision != revision)
+    {
+        halogenWheel.dismiss();
+        canvas.restoreMolecule (processor.getMolecularState(), false);
+        displayedRevision = revision;
+        currentPreset = -1;
+        repaint();
+    }
 
     // 宿主若在编辑器创建后用自己记忆的大小异步覆盖窗口（onSize 晚到），
     // 每帧把窗口拉回工程保存的宽度，保证重开界面时大小不被重置。
@@ -220,6 +255,7 @@ void OrganicChemistryAudioProcessorEditor::timerCallback()
     }
 
     canvas.advanceAnimation (dt);
+    halogenWheel.advanceAnimation();
     // 展开/收起动画进行中时，每帧重排布局让高度平滑过渡。
     if (elementBar.advanceAnimation (dt))
         resized();
@@ -281,9 +317,73 @@ void OrganicChemistryAudioProcessorEditor::paint (juce::Graphics& g)
 
     paintInfoBar (g);
 
+    // 标题带（与 Transcription 同格式）：小号眉题 + 27px 大标题，位于顶栏下方左侧。
+    g.setColour (juce::Colour (0xFF858983));
+    g.setFont (juce::Font (juce::FontOptions (9.5f * s)));
+    g.drawText ("01 / ORGANIC CHEMISTRY",
+                juce::Rectangle<float> (25.0f * s, 64.0f * s, 220.0f * s, 17.0f * s),
+                juce::Justification::centredLeft, false);
+
+    g.setColour (juce::Colour (0xFF292D2E));
+    g.setFont (juce::Font (juce::FontOptions (27.0f * s)));
+    g.drawText ("Organic Chemistry",
+                juce::Rectangle<float> (23.0f * s, 82.0f * s, 280.0f * s, 33.0f * s),
+                juce::Justification::centredLeft, false);
+
+    // 右上角波形预览窗口：置于标题带右上角（顶栏下方）。
+    paintWavePreview (g);
+
     // 顶栏底部分隔线改由独立顶层组件 topHairline 绘制（见 resized），
     // 避免展开 REACTION 面板时被 ElementBar 的白色填充盖住半条线。
     // （底部栏顶部的横线已按要求移除，MOLECULE/REACTION tab 上方不再有分隔线。）
+}
+
+void OrganicChemistryAudioProcessorEditor::paintWavePreview (juce::Graphics& g) const
+{
+    const float s = uiScale();
+
+    // 设计尺寸 180×50，随 uiScale 等比缩放；置于标题带右上角（顶栏下方）。
+    const float w = 180.0f * s;
+    const float h = 50.0f * s;
+    const float margin = 12.0f * s;
+
+    const auto bounds = juce::Rectangle<float> (
+        (float) getWidth() - w - margin, kTopBarHeight * s + margin, w, h);
+
+    // 背景 + 细边框。
+    g.setColour (juce::Colour (0xFFF7F7F3));
+    g.fillRect (bounds);
+    g.setColour (juce::Colour (0xFFDCDCD5));
+    g.drawRect (bounds, 1.0f * s);
+
+    // 水平零线。
+    g.setColour (juce::Colour (0xFFE8E8E2));
+    g.drawLine (bounds.getX(), bounds.getCentreY(),
+                bounds.getRight(), bounds.getCentreY(), 1.0f * s);
+
+    // 波形曲线。
+    const auto wave = processor.getPreviewWave();
+    const int count = (int) wave.size();
+    if (count < 2)
+        return;
+
+    const float midY = bounds.getCentreY();
+    const float amp = h * 0.40f;
+    const float x0 = bounds.getX() + 3.0f * s;
+    const float x1 = bounds.getRight() - 3.0f * s;
+
+    juce::Path path;
+    path.startNewSubPath (x0, midY - wave[0] * amp);
+
+    for (int i = 1; i < count; ++i)
+    {
+        const float x = x0 + (float) i * (x1 - x0) / (float) (count - 1);
+        const float y = midY - wave[(size_t) i] * amp;
+        path.lineTo (x, y);
+    }
+
+    g.setColour (juce::Colour (0xFF2A2A28));
+    g.strokePath (path, juce::PathStrokeType (1.3f * s));
 }
 
 void OrganicChemistryAudioProcessorEditor::paintInfoBar (juce::Graphics& g) const
@@ -416,6 +516,8 @@ juce::Rectangle<int> OrganicChemistryAudioProcessorEditor::getNextPresetBounds()
 
 void OrganicChemistryAudioProcessorEditor::showPresetMenu()
 {
+    halogenWheel.dismiss();
+    canvas.cancelDrag();
     const float s = uiScale();
 
     presetMenu.setUiScale (s);
@@ -493,8 +595,20 @@ juce::String OrganicChemistryAudioProcessorEditor::clearButtonText() const
     return elementBar.isExpanded() ? "Reset" : "Clear";
 }
 
+void OrganicChemistryAudioProcessorEditor::visibilityChanged()
+{
+    if (! isVisible())
+    {
+        halogenWheel.dismiss();
+        canvas.cancelDrag();
+    }
+}
+
 void OrganicChemistryAudioProcessorEditor::resized()
 {
+    halogenWheel.dismiss();
+    canvas.cancelDrag();
+    halogenWheel.setBounds (getLocalBounds());
     // 窗口大小变化（用户缩放 / 宿主调整）时实时记录宽度，宿主保存工程
     // 时经 getStateInformation 持久化，重开界面时恢复。
     if (getWidth() > 0)
@@ -509,6 +623,8 @@ void OrganicChemistryAudioProcessorEditor::resized()
 
     auto area = getLocalBounds();
     area.removeFromTop ((int) (kTopBarHeight * s));
+    // 标题带：画布与元素栏从标题带下方开始（与 Transcription 的画布起点一致）。
+    area.removeFromTop ((int) (kTitleBandHeight * s));
 
     // 展开动画：元素栏高度从底部条平滑过渡到占满整个编辑区。
     const int bottomH = (int) (kBottomBarHeight * s);
@@ -706,4 +822,32 @@ void OrganicChemistryAudioProcessorEditor::mouseExit (const juce::MouseEvent&)
         setMouseCursor (juce::MouseCursor::NormalCursor);
         repaint();
     }
+}
+
+// ---------------------------------------------------------------------------
+//  Hover tooltips (v1.1.3)
+// ---------------------------------------------------------------------------
+
+juce::String OrganicChemistryAudioProcessorEditor::getTooltip()
+{
+    // 预设面板打开时是全屏遮罩层，不显示顶栏提示。
+    if (presetMenuVisible || halogenWheel.isVisible())
+        return {};
+
+    const auto p = getMouseXYRelative();
+
+    if (getWebsiteBounds().contains (p))
+        return "Visit iisaacbeats.cn";
+    if (getPrevPresetBounds().contains (p))
+        return "Previous preset";
+    if (getNextPresetBounds().contains (p))
+        return "Next preset";
+    if (getFormulaBounds().contains (p))
+        return "Molecule presets";
+
+    if ((elementBar.isExpanded() || canvas.getMolecule().heavyAtomCount() > 0)
+        && getClearButtonBounds().contains (p))
+        return elementBar.isExpanded() ? "Reset ADSR to defaults" : "Clear the molecule";
+
+    return {};
 }

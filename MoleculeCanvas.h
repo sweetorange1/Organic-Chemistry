@@ -26,7 +26,8 @@
 namespace organic
 {
 
-class MoleculeCanvas : public juce::Component
+class MoleculeCanvas : public juce::Component,
+                       public juce::TooltipClient
 {
 public:
     MoleculeCanvas();
@@ -41,11 +42,21 @@ public:
     void mouseUp (const juce::MouseEvent& e) override;
     void mouseExit (const juce::MouseEvent& e) override;
 
+    /** 原子 / 化学键的动态悬停提示（元素名与可用操作）。 */
+    juce::String getTooltip() override;
+
     /** Driven by the editor's single animation clock. */
     void advanceAnimation (float dt);
 
-    void setCurrentElement (Element e) { currentElement = e; }
+    void setCurrentElement (Element e) { cancelDrag(); currentElement = e; repaint(); }
     Element getCurrentElement() const { return currentElement; }
+    void cancelDrag();
+    bool keyPressed (const juce::KeyPress&) override;
+    void focusLost (FocusChangeType) override { cancelDrag(); }
+    juce::Point<float> atomScreenPosition (int index) const
+    {
+        return modelToScreen (molecule.atoms()[(size_t) index].pos);
+    }
 
     /** Global UI scale from window resizing (problem 2). */
     void setUiScale (float s) { uiScale = s; }
@@ -57,7 +68,7 @@ public:
         Used to restore a saved project when the editor opens. After restoring,
         the onMoleculeChanged callback fires so the audio mapping re-derives.
         Invalid trees are ignored (molecule left untouched). */
-    void restoreMolecule (const juce::ValueTree& tree);
+    void restoreMolecule (const juce::ValueTree& tree, bool notify = true);
 
     const Molecule& getMolecule() const { return molecule; }
 
@@ -65,12 +76,6 @@ public:
 
     /** 画布收到鼠标按下时回调（用于提交旋钮输入框等外部交互）。 */
     std::function<void()> onPointerDown;
-
-    /** 波形预览数据提供者：返回一组 -1..1 的采样，供右上角波形窗口绘制。
-
-        由编辑器注入，指向处理器的 getPreviewWave()。无音频输出时返回分子
-        wavetable 波形，有输出时返回输出信号波形。 */
-    std::function<std::vector<float>()> previewWaveProvider;
 
 private:
     // --- Coordinate transforms (model space <-> screen space) ---
@@ -94,7 +99,6 @@ private:
     void paintEmptyHint (juce::Graphics& g) const;
     void paintStructuralFormula (juce::Graphics& g) const;
     void paintGhost (juce::Graphics& g) const;
-    void paintWavePreview (juce::Graphics& g) const;
 
     /** Recompute dragValid / dragTargetAtom from the current pointer. */
     void updateDragValidity();
@@ -121,7 +125,8 @@ private:
     int  dragSourceAtom = -1;                // heavy atom pressed on, -1 = empty space
     int  dragTargetAtom = -1;                // heavy atom currently hovered for bonding
     bool dragValid = false;                  // release position is placeable / bondable
-    juce::Point<float> dragCurrentModel;     // ghost position in model space
+    int dragAttachAtom = -1;
+    juce::Point<float> dragCurrentModel, dragCurrentScreen, dragGhostModel;
 
     juce::Point<float> ripplePos;   // screen space
     float rippleAnim = 1.0f;

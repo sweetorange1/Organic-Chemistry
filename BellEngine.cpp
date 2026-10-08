@@ -178,6 +178,16 @@ bool BellVoice::canPlaySound (juce::SynthesiserSound* sound)
     return dynamic_cast<BellSound*> (sound) != nullptr;
 }
 
+void BellVoice::prepare (double sampleRate)
+{
+    preparedSr = (float) sampleRate;
+    const juce::dsp::ProcessSpec spec { sampleRate, 512, 1 };
+    lowPass.prepare (spec);
+    noiseBandpass.prepare (spec);
+    lowPass.reset();
+    noiseBandpass.reset();
+}
+
 void BellVoice::startNote (int midiNoteNumber, float velocity,
                            juce::SynthesiserSound*, int /*pitchWheel*/)
 {
@@ -185,6 +195,10 @@ void BellVoice::startNote (int midiNoteNumber, float velocity,
 
     const int transposed = midiNoteNumber + patch.voiceTranspose;
     baseFreqHz = static_cast<float> (juce::MidiMessage::getMidiNoteInHertz (transposed));
+
+    // 报告音高，供全局卤素效果（梳状滤波 / 环形调制）跟踪最近触发的音符。
+    if (owner != nullptr)
+        owner->reportNoteFrequency (baseFreqHz);
 
     // velocity track = 0 → 力度不敏感，所有音等响。
     juce::ignoreUnused (velocity);
@@ -195,6 +209,16 @@ void BellVoice::startNote (int midiNoteNumber, float velocity,
 
     // 触发噪声击打采样（noise_attack_1 一次性播放）。
     samplePos = 0.0;
+    const auto sample = owner != nullptr ? owner->getNoiseSampleView()
+                                         : OrganicChemistryAudioProcessor::NoiseSampleView();
+    sampleData = sample.data;
+    sampleLength = sample.length;
+    sampleRate = sample.sampleRate;
+    if (preparedSr > 0.0f)
+    {
+        noiseBandpass.setCutoffFrequency (juce::jlimit (20.0f, 0.45f * preparedSr, patch.sampleCutoffHz));
+        noiseBandpass.setResonance (juce::jlimit (0.25f, 20.0f, 1.0f / (0.707f + patch.sampleResonance * 4.0f)));
+    }
 
     envState = EnvState::attack;
     env2State = EnvState::attack;
@@ -307,7 +331,7 @@ float BellVoice::renderOscillator (int index, double sampleRate, double pitchRat
 void BellVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
                                  int startSample, int numSamples)
 {
-    if (baseFreqHz <= 0.0f || owner == nullptr)
+    if (! isVoiceActive() || baseFreqHz <= 0.0f || owner == nullptr)
         return;
 
     const double sr = getSampleRate();
@@ -316,24 +340,15 @@ void BellVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
 
     const int numChannels = outputBuffer.getNumChannels();
 
-    // 滤波器准备（采样率变化时重新准备）。
     if ((float) sr != preparedSr)
-    {
-        preparedSr = (float) sr;
-        juce::dsp::ProcessSpec spec { sr, 512, 1 };
-        lowPass.prepare (spec);
-        noiseBandpass.prepare (spec);
-        noiseBandpass.setCutoffFrequency (patch.sampleCutoffHz);
-        noiseBandpass.setResonance (juce::jlimit (0.25f, 20.0f, 1.0f / (0.707f + patch.sampleResonance * 4.0f)));
-    }
+        return;
 
     const float attackStep  = (float) (1.0 / (sr * juce::jmax (0.001f, patch.ampAttack)));
     const float decayTau    = (float) (patch.ampDecay * sr / 5.0);
     const float releaseTau  = (float) (patch.ampRelease * sr / 5.0);
     const float env2DecayTau  = (float) (patch.env2Decay * sr / 5.0);
     const float env2ReleaseTau= (float) (patch.env2Release * sr / 5.0);
-    const double sampleStep = (owner->getNoiseSampleRate() > 0.0)
-        ? owner->getNoiseSampleRate() / sr : 1.0;   // 采样率换算
+    const double sampleStep = sampleRate > 0.0 ? sampleRate / sr : 1.0;
 
     // DETUNE 宏：慢速三角波音高漂移（Vital lfo_1 0.2Hz → voice_tune）。
     const double detuneDepthCents = 0.225 * patch.detuneDepth * 100.0;   // 最多 ±22.5 音分
@@ -427,8 +442,8 @@ void BellVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer,
         float noiseOut = 0.0f;
         if (patch.sampleOn)
         {
-            const float* data = owner->getNoiseSampleData();
-            const int len = owner->getNoiseSampleLength();
+            const float* data = sampleData;
+            const int len = sampleLength;
             if (data != nullptr && len > 1 && samplePos < (double) (len - 1))
             {
                 const int idx = (int) samplePos;

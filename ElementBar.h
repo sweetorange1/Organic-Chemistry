@@ -17,7 +17,8 @@
 namespace organic
 {
 
-class ElementBar : public juce::Component
+class ElementBar : public juce::Component,
+                   public juce::TooltipClient
 {
 public:
     ElementBar();
@@ -32,6 +33,9 @@ public:
     void mouseMove (const juce::MouseEvent& e) override;
     void mouseExit (const juce::MouseEvent& e) override;
 
+    /** 页签 / 元素色块 / ADSR 旋钮的动态悬停提示。 */
+    juce::String getTooltip() override;
+
     /** 仅拦截元素行与页签，其余区域（展开时的空白）透传给下层。 */
     bool hitTest (int x, int y) override;
 
@@ -45,6 +49,9 @@ public:
     void setUiScale (float s) { uiScale = s; resized(); }
 
     std::function<void (Element)> onElementChosen;
+    std::function<void (const juce::MouseEvent&)> onHalogenPress, onHalogenDrag, onHalogenRelease;
+    void cancelHalogenGesture() { halogenGesture = false; }
+    juce::Rectangle<float> halogenBounds() const { return slots.back().bounds; }
 
     // ===== 展开的反应剖面（ADSR 图形，页签切换）=====
 
@@ -77,12 +84,14 @@ private:
         juce::Rectangle<float> bounds;
         float selectAnim = 0.0f;
         float hoverAnim  = 0.0f;
+        bool halogens = false;
     };
 
     int slotIndexAt (juce::Point<float> p) const;
 
     std::vector<Slot> slots;
     Element selected = Element::Carbon;
+    bool halogenGesture = false;
     int hoveredIndex = -1;
     float breathPhase = 0.0f;
     float uiScale = 1.0f;
@@ -142,6 +151,37 @@ private:
     static constexpr float kKnobWidth = 80.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ElementBar)
+};
+
+class HalogenWheel final : public juce::Component
+{
+public:
+    HalogenWheel();
+    void open (juce::Point<float> anchor, float scale);
+    void dismiss();
+    void track (juce::Point<float> position);
+    void release (juce::Point<float> position);
+    void advanceAnimation();
+    void paint (juce::Graphics&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    void focusLost (FocusChangeType) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent& e) override { track (e.position); }
+    void mouseDrag (const juce::MouseEvent& e) override { track (e.position); }
+    void mouseUp (const juce::MouseEvent& e) override { release (e.position); }
+    int indexAt (juce::Point<float>) const;
+    juce::Point<float> optionCentre (int index) const;
+    static const char* effectName (int index);
+    /** 扇形视觉位置（0..3 从左到右 F/I/Br/Cl）对应的卤素元素。 */
+    static Element elementFor (int visualIndex);
+    std::function<void (Element)> onChosen;
+    std::function<void()> onDismissed;
+
+private:
+    juce::Point<float> centre, anchorPoint;
+    float uiScale = 1.0f, opacity = 0.0f;
+    int hovered = -1;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HalogenWheel)
 };
 
 } // namespace organic

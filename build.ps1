@@ -72,14 +72,33 @@ $configureArgs = @(
     "-DCMAKE_C_COMPILER=cl",
     "-DCMAKE_CXX_COMPILER=cl",
     "-DFETCHCONTENT_SOURCE_DIR_JUCE=$juceSrc",
-    "-DORGANIC_COPY_PLUGIN_AFTER_BUILD=OFF"
+    "-DORGANIC_COPY_PLUGIN_AFTER_BUILD=OFF",
+    "-DORGANIC_BUILD_BELL_TESTS=ON"
 )
 
 & $cmake @configureArgs > build.log 2>&1
-if ($LASTEXITCODE -ne 0) { Get-Content build.log -Tail 60; exit $LASTEXITCODE }
+$code = $LASTEXITCODE
+if ($code -ne 0) { Get-Content build.log -Tail 60; exit $code }
 
-& $cmake --build $buildDir >> build.log 2>&1
-if ($LASTEXITCODE -ne 0) { Get-Content build.log -Tail 80; exit $LASTEXITCODE }
+& $cmake --build $buildDir --parallel 4 >> build.log 2>&1
+$code = $LASTEXITCODE
+if ($code -ne 0) { Get-Content build.log -Tail 80; exit $code }
 
+$ctest = Join-Path (Split-Path $cmake) "ctest.exe"
+& $ctest --test-dir $buildDir -C Release -R "^OrganicChemistryBellTests$" --output-on-failure
+$code = $LASTEXITCODE
+if ($code -ne 0) { exit $code }
+
+$cmakeText = Get-Content (Join-Path $projectDir "CMakeLists.txt") -Raw
+$expectedVersion = [regex]::Match($cmakeText, 'project\(OrganicChemistry VERSION ([0-9.]+)').Groups[1].Value
+if (-not $expectedVersion) { throw "Cannot read the plugin version from CMakeLists.txt" }
+$artefacts = Join-Path $buildDir "OrganicChemistry_artefacts\Release"
+foreach ($relative in @("Standalone\ChemE-Organic Chemistry.exe", "VST3\ChemE-Organic Chemistry.vst3\Contents\x86_64-win\ChemE-Organic Chemistry.vst3")) {
+    $binary = Get-Item -LiteralPath (Join-Path $artefacts $relative)
+    if ($binary.VersionInfo.ProductVersion -ne $expectedVersion -or $binary.VersionInfo.ProductName -ne "ChemE-Organic Chemistry") {
+        throw "Stale Windows version resource: $($binary.FullName)"
+    }
+}
+Write-Output "VERSION_OK $expectedVersion"
 Write-Output "BUILD_OK"
 exit 0

@@ -727,7 +727,7 @@ OrganicChemistryAudioProcessor::OrganicChemistryAudioProcessor (bool isCalibrati
     moleculeWave = organic::kOsc1Wave;
 
     // 启动后延迟 5 秒异步检查一次更新（进程级去重，失败静默，仅在有新版本时弹窗）。
-    if (! calibrationInstance)
+    if (! calibrationInstance && juce::SystemStats::getEnvironmentVariable ("ORGANIC_UPDATE_CHECK_DISABLED", {}) != "1")
     {
         juce::Timer::callAfterDelay (5000, []
         {
@@ -809,6 +809,15 @@ void OrganicChemistryAudioProcessor::loadNoiseSamples()
     }
 }
 
+OrganicChemistryAudioProcessor::NoiseSampleView OrganicChemistryAudioProcessor::getNoiseSampleView() const noexcept
+{
+    const int index = activeNoiseIndex.load (std::memory_order_relaxed);
+    if (! juce::isPositiveAndBelow (index, (int) noiseLibrary.size()))
+        return {};
+    const auto& sample = noiseLibrary[(size_t) index];
+    return { sample.data.data(), (int) sample.data.size(), sample.sampleRate };
+}
+
 const float* OrganicChemistryAudioProcessor::getNoiseSampleData() const noexcept
 {
     const int idx = activeNoiseIndex.load (std::memory_order_relaxed);
@@ -854,6 +863,13 @@ void OrganicChemistryAudioProcessor::prepareToPlay (double sampleRate, int sampl
 {
     synth.allNotesOff (0, false);
     synth.setCurrentPlaybackSampleRate (sampleRate);
+    for (int i = 0; i < synth.getNumVoices(); ++i)
+        if (auto* voice = dynamic_cast<organic::BellVoice*> (synth.getVoice (i)))
+            voice->prepare (sampleRate);
+    halogenEffects.prepare (sampleRate);
+    halogenEffects.setCounts (getHalogenCounts(), true);
+    consumeBellWave();
+    bellWasEmpty = true;
     timbreGain.reset (sampleRate, 0.05);
     timbreGain.setCurrentAndTargetValue (calibratedGain);
     fadeState = FadeState::idle;
@@ -938,9 +954,26 @@ void OrganicChemistryAudioProcessor::prepareToPlay (double sampleRate, int sampl
     bellDownsample[1].reset();
 }
 
+void OrganicChemistryAudioProcessor::clearBellEffects()
+{
+    halogenEffects.reset();
+    delayLineL.reset();
+    delayLineR.reset();
+    reverb.reset();
+    for (int i = 0; i < 4; ++i)
+    {
+        chorusLineL[i].reset();
+        chorusLineR[i].reset();
+    }
+    bellCompressor.reset();
+    bellDownsample[0].reset();
+    bellDownsample[1].reset();
+}
+
 void OrganicChemistryAudioProcessor::releaseResources()
 {
-    synth.allNotesOff (0, true);
+    synth.allNotesOff (0, false);
+    clearBellEffects();
 }
 
 // ---------------------------------------------------------------------------
@@ -971,50 +1004,63 @@ void OrganicChemistryAudioProcessor::setBellParams (const std::array<float, orga
 
 void OrganicChemistryAudioProcessor::applyMolecularStateToAudio()
 {
-    // 从保存的分子拓扑重建分子（无界面加载工程时也能映射出音色）。
+    const juce::ScopedLock mappingLock (bellMappingLock);
     organic::Molecule mol;
+    const auto state = getMolecularState();
+    if (state.isValid() && ! mol.fromValueTree (state))
+        return;
+
+    const auto parent = mol.withoutHalogens();
+    const auto smiles = parent.canonicalSmiles();
+    if (! parentMapped || mappedParent != smiles)
     {
-        const juce::ValueTree state = getMolecularState();
-        if (state.isValid() && state.hasType ("Molecule"))
-            mol.fromValueTree (state);
+        const auto descriptors = parent.computeDescriptors();
+        setMoleculeWave (organic::buildNearSineWave (descriptors, smiles));
+        const auto mapped = organic::mapMoleculeToBellParams (descriptors, smiles);
+        for (int i = 0; i < organic::kNumBellParams; ++i)
+            if (i != (int) organic::BellParamId::AmpAttack && i != (int) organic::BellParamId::AmpDecay
+                && i != (int) organic::BellParamId::AmpSustain && i != (int) organic::BellParamId::AmpRelease)
+                setBellParam (i, mapped[(size_t) i]);
+        if (getNoiseSampleCount() > 0)
+            setNoiseSampleIndex ((int) (organic::hashSmiles (smiles) % (uint32_t) getNoiseSampleCount()));
+        mappedParent = smiles;
+        parentMapped = true;
     }
 
-    const auto descriptors = mol.computeDescriptors();
-    const auto smiles      = mol.canonicalSmiles();
-
-    // 分子波表（近正弦）。
-    setMoleculeWave (organic::buildNearSineWave (descriptors, smiles));
-
-    // ADSR 与分子解绑：映射前保存、映射后恢复。
-    const float envA = getBellParam ((int) organic::BellParamId::AmpAttack);
-    const float envD = getBellParam ((int) organic::BellParamId::AmpDecay);
-    const float envS = getBellParam ((int) organic::BellParamId::AmpSustain);
-    const float envR = getBellParam ((int) organic::BellParamId::AmpRelease);
-
-    const auto bellParams = organic::mapMoleculeToBellParams (descriptors, smiles);
-    setBellParams (bellParams);
-
-    setBellParam ((int) organic::BellParamId::AmpAttack,  envA);
-    setBellParam ((int) organic::BellParamId::AmpDecay,   envD);
-    setBellParam ((int) organic::BellParamId::AmpSustain, envS);
-    setBellParam ((int) organic::BellParamId::AmpRelease, envR);
-
-    // 用 SMILES 哈希选击打采样。
-    if (getNoiseSampleCount() > 0)
-        setNoiseSampleIndex ((int) (organic::hashSmiles (smiles) % (uint32_t) getNoiseSampleCount()));
-
-    // 画布无原子时静音。
+    const auto counts = mol.halogenCounts();
+    juce::uint32 packed = 0;
+    for (size_t i = 0; i < counts.size(); ++i)
+        packed |= (juce::uint32) juce::jlimit (0, 8, counts[i]) << (i * 4);
+    halogenCountsPacked.store (packed, std::memory_order_release);
     setMoleculeEmpty (mol.heavyAtomCount() == 0);
+}
 
-    // 波形/参数切换做一次弱 fade。
-    triggerFade();
+std::array<int, 4> OrganicChemistryAudioProcessor::getHalogenCounts() const noexcept
+{
+    const auto packed = halogenCountsPacked.load (std::memory_order_acquire);
+    std::array<int, 4> counts {};
+    for (size_t i = 0; i < counts.size(); ++i)
+        counts[i] = (int) ((packed >> (i * 4)) & 0xfu);
+    return counts;
 }
 
 void OrganicChemistryAudioProcessor::setMoleculeWave (const organic::WaveTable& table)
 {
-    moleculeWave.fill (0.0f);
+    const juce::SpinLock::ScopedLockType lock (bellWaveLock);
+    pendingBellWave.fill (0.0f);
     const int n = juce::jmin (organic::kWaveTableSize, (int) table.samples.size());
-    std::copy_n (table.samples.begin(), n, moleculeWave.begin());
+    for (int i = 0; i < n; ++i)
+        pendingBellWave[(size_t) i] = std::isfinite (table.samples[(size_t) i]) ? table.samples[(size_t) i] : 0.0f;
+    bellWavePending = true;
+}
+
+void OrganicChemistryAudioProcessor::consumeBellWave()
+{
+    const juce::SpinLock::ScopedTryLockType lock (bellWaveLock);
+    if (! lock.isLocked() || ! bellWavePending)
+        return;
+    moleculeWave = pendingBellWave;
+    bellWavePending = false;
 }
 
 float OrganicChemistryAudioProcessor::getMacro (int index) const noexcept
@@ -1109,14 +1155,19 @@ void OrganicChemistryAudioProcessor::processBellBlock (juce::AudioBuffer<float>&
     const int numChannels = buffer.getNumChannels();
     const float sr = static_cast<float> (getSampleRate());
 
-    // 空分子静音：没有分子就没有音色。
-    if (moleculeEmpty.load (std::memory_order_relaxed) && !calibrationInstance)
+    consumeBellWave();
+    if (moleculeEmpty.load (std::memory_order_relaxed) && ! calibrationInstance)
     {
         buffer.clear();
         synth.allNotesOff (0, false);
-        captureOutputWave (buffer, numSamples);   // 波形归零
+        if (! bellWasEmpty)
+            clearBellEffects();
+        bellWasEmpty = true;
+        captureOutputWave (buffer, numSamples);
         return;
     }
+    bellWasEmpty = false;
+    halogenEffects.setCounts (getHalogenCounts());
 
     buffer.clear();
     synth.renderNextBlock (buffer, midiMessages, 0, numSamples);
@@ -1147,6 +1198,9 @@ void OrganicChemistryAudioProcessor::processBellBlock (juce::AudioBuffer<float>&
                     buffer.setSample (ch, s, x * (1.0f - mix) + wet * mix);
                 }
     }
+
+    halogenEffects.process (buffer.getArrayOfWritePointers(), numChannels, numSamples,
+                            lastNoteHz.load (std::memory_order_relaxed));
 
     // 2) 合唱（Vital 4 声部 + 反馈）。
     {
@@ -1751,10 +1805,15 @@ void OrganicChemistryAudioProcessor::triggerFade()
 //  分子状态（DAW 工程持久化）
 // ---------------------------------------------------------------------------
 
-void OrganicChemistryAudioProcessor::setMolecularState (const juce::ValueTree& tree)
+bool OrganicChemistryAudioProcessor::setMolecularState (const juce::ValueTree& tree)
 {
+    organic::Molecule validated;
+    if (! validated.fromValueTree (tree))
+        return false;
     const juce::ScopedLock lock (molecularStateLock);
-    molecularState = tree.createCopy();
+    molecularState = validated.toValueTree();
+    stateRevision.fetch_add (1);
+    return true;
 }
 
 juce::ValueTree OrganicChemistryAudioProcessor::getMolecularState() const
@@ -1813,12 +1872,12 @@ juce::AudioProcessorEditor* OrganicChemistryAudioProcessor::createEditor()
 
 bool OrganicChemistryAudioProcessor::hasEditor() const { return true; }
 
-const juce::String OrganicChemistryAudioProcessor::getName() const { return "Organic Chemistry"; }
+const juce::String OrganicChemistryAudioProcessor::getName() const { return JucePlugin_Name; }
 
 bool OrganicChemistryAudioProcessor::acceptsMidi() const { return true; }
 bool OrganicChemistryAudioProcessor::producesMidi() const { return false; }
 bool OrganicChemistryAudioProcessor::isMidiEffect() const { return false; }
-double OrganicChemistryAudioProcessor::getTailLengthSeconds() const { return 0.0; }
+double OrganicChemistryAudioProcessor::getTailLengthSeconds() const { return 30.0; }
 
 // ---------------------------------------------------------------------------
 //  Program（预置）
@@ -1838,6 +1897,7 @@ void OrganicChemistryAudioProcessor::getStateInformation (juce::MemoryBlock& des
 {
     // 统一包装：根节点下挂 ADSR 参数树 + 分子拓扑，便于日后扩展。
     juce::ValueTree root ("OrganicChemistryState");
+    root.setProperty ("mappingVersion", 2, nullptr);
     root.setProperty ("editorWidth", editorWidth.load(), nullptr);
 
     if (apvts != nullptr)
@@ -1850,13 +1910,13 @@ void OrganicChemistryAudioProcessor::getStateInformation (juce::MemoryBlock& des
     if (auto xml = root.createXml())
     {
         const juce::String xmlString = xml->toString();
-        destData.append (xmlString.toRawUTF8(), xmlString.getNumBytesAsUTF8());
+        destData.replaceAll (xmlString.toRawUTF8(), (size_t) xmlString.getNumBytesAsUTF8());
     }
 }
 
 void OrganicChemistryAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (data == nullptr || sizeInBytes <= 0)
+    if (data == nullptr || sizeInBytes <= 0 || sizeInBytes > 1024 * 1024)
         return;
 
     const juce::String xmlString = juce::String::fromUTF8 ((const char*) data, sizeInBytes);
@@ -1873,28 +1933,24 @@ void OrganicChemistryAudioProcessor::setStateInformation (const void* data, int 
 
     if (tree.hasType ("OrganicChemistryState"))
     {
-        // 编辑器窗口宽度（50% ~ 200% 设计宽度，与编辑器 constrainer 的限制一致）。
+        if (tree.hasProperty ("mappingVersion") && tree.getProperty ("mappingVersion").toString() != "2")
+            return;
+        auto molChild = tree.getChildWithName ("Molecule");
+        if (! molChild.isValid())
+            molChild = juce::ValueTree ("Molecule");
+        if (! setMolecularState (molChild))
+            return;
         editorWidth.store (juce::jlimit (410, 1640, (int) tree.getProperty ("editorWidth", 820)));
-
-        // 新格式：分别恢复 ADSR 参数与分子拓扑。
         if (apvts != nullptr)
         {
             const auto adsrChild = tree.getChildWithName (apvts->state.getType());
             if (adsrChild.isValid())
                 apvts->replaceState (adsrChild);
         }
-
-        const auto molChild = tree.getChildWithName ("Molecule");
-        if (molChild.isValid())
-            setMolecularState (molChild);
     }
-    else if (tree.hasType ("Molecule"))
-    {
-        // 旧格式（仅分子）：兼容早期保存的工程。
-        setMolecularState (tree);
-    }
+    else if (! tree.hasType ("Molecule") || ! setMolecularState (tree))
+        return;
 
-    // 重建分子 → 映射到音频，使宿主在未打开界面时也能直接出声。
     applyMolecularStateToAudio();
 }
 

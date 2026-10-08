@@ -35,13 +35,13 @@
 ## 预览 / Preview
 
 <p align="center">
-  <img src="readme_1.png" alt="Organic Chemistry — Iodomethane" width="49%">
+  <img src="readme_1.png" alt="Organic Chemistry — Iodobenzene" width="49%">
   <img src="readme_2.png" alt="Organic Chemistry — Caffeine" width="49%">
 </p>
 
 <p align="center">
-  <code>左：碘甲烷 · 含碘卤代烷 ░ 右：咖啡因 · 四氮杂环，多环稠合</code><br>
-  <em>left: iodomethane, an iodinated alkane — right: caffeine, a four-nitrogen heterocycle.</em>
+  <code>左：碘苯 · 含碘芳香环 ░ 右：咖啡因 · 四氮杂环，多环稠合</code><br>
+  <em>left: iodobenzene, an iodinated arene — right: caffeine, a four-nitrogen heterocycle.</em>
 </p>
 
 ---

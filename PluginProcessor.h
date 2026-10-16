@@ -206,8 +206,8 @@ public:
 
     /** 返回一段用于 UI 波形预览的采样（长度 kPreviewWaveSize，约 -1..1）。
 
-        始终返回当前分子 wavetable 的单周期波形（静态预览，不随输出信号
-        变化）。编辑器（UI 线程）在绘制右上角波形窗口时调用。线程安全。 */
+        返回实时输出波形的最近 kPreviewWaveSize 个采样（示波器），随合成器
+        输出实时变化。编辑器（UI 线程）在绘制右上角波形窗口时调用。线程安全。 */
     std::vector<float> getPreviewWave() const;
 
     /** 分子拓扑变化时由编辑器调用：请求一次弱 fade-out / fade-in。
@@ -367,7 +367,7 @@ private:
     std::atomic<int> activeNoiseIndex { 0 };
 
     WaveTableBuffer moleculeWave, pendingBellWave {};
-    juce::SpinLock bellWaveLock;
+    mutable juce::SpinLock bellWaveLock;
     bool bellWavePending = false;
     void consumeBellWave();
     juce::CriticalSection bellMappingLock;

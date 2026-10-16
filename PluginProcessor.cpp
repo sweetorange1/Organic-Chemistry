@@ -1854,6 +1854,9 @@ std::vector<float> OrganicChemistryAudioProcessor::getPreviewWave() const
     std::vector<float> result ((size_t) kPreviewWaveSize, 0.0f);
 
     // 返回实时输出波形的最近 kPreviewWaveSize 个采样（示波器）。
+    // outputWaveWritePos 是下一个写入位置，因此 outputWave[pos] 是最旧的
+    // 样本、(pos - 1) 是最新的；从 pos 连续读 kPreviewWaveSize 个即按
+    // 时间先后排列。
     const int pos = outputWaveWritePos.load (std::memory_order_acquire);
     for (int i = 0; i < kPreviewWaveSize; ++i)
         result[(size_t) i] = outputWave[(size_t) ((pos + i) % kPreviewWaveSize)];

@@ -10,7 +10,7 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`ChemE-Organic Chemistry`（版本 `1.2.0`）。自 1.1.3 起全系列统一加 `ChemE-` 前缀；宿主显示名与 VST3 包名随之为 `ChemE-Organic Chemistry.vst3`，CMake target 仍为 `OrganicChemistry`，产物目录 `OrganicChemistry_artefacts` 不变。
+- **产品名**：`ChemE-Organic Chemistry`（版本 `1.2.1`）。自 1.1.3 起全系列统一加 `ChemE-` 前缀；宿主显示名与 VST3 包名随之为 `ChemE-Organic Chemistry.vst3`，CMake target 仍为 `OrganicChemistry`，产物目录 `OrganicChemistry_artefacts` 不变。
 - **产品形态**：一款以 **分子结构编辑器作为主交互界面** 的 **Bell 音色合成器**（Synth / 乐器插件）。现有 Bell 钟声底色由母体结构的确定性哈希生成；v1.1.4 起，含卤结构先在图上去除 F/Cl/Br/I 并补回氢，再用母体生成波表、Bell 参数和击打采样。四类卤素只驱动各自的定向效果，不重新随机化母体底色（详见 §14）。
 - **产品分类**：`IS_SYNTH TRUE` + `NEEDS_MIDI_INPUT TRUE`，AU 注册为 `kAudioUnitType_MusicDevice`（乐器）。
 - **发行形态**（[CMakeLists.txt](/I:/Organic%20Chemistry/CMakeLists.txt) 中 `juce_add_plugin`）：
@@ -56,7 +56,7 @@
 - **ADSR 与分子解绑**：包络不再由分子映射驱动，改由 REACTION 页签旋钮独立控制（后续可接 EnvelopePanel 图形编辑器）
 - **ADSR 宿主自动化**：Attack / Decay / Sustain / Release 接入 `AudioProcessorValueTreeState`，支持宿主自动化、MIDI CC 与工程持久化
 - **EnvelopePanel（未接线）**：ADSR 图形编辑器组件文件已写好，但尚未接入界面
-- **波形预览**：右上角实时显示 osc_1 的分子波表（近正弦 + 少量 SMILES 哈希决定的谐波）
+- **波形预览**：右上角实时显示合成器输出的波形（示波器，最近 512 样本的实时输出）
 - **Test 面板（v1.0.0 起屏蔽）**：33 个 Bell 参数按分类展示，`kTestPanelEnabled = false` 暂时隐藏
 - **自动更新检查 + 更新弹窗**：启动后延迟 5s 异步请求 `iisaacbeats.cn/api/update/check`（5s 超时、失败静默），仅有新版本时弹原生更新窗（`network/` + `ui/UpdateDialog`）
 - **每日匿名遥测**：`shared/IisaacTelemetry.h`，每日一次 `ui_open` 事件（无音频数据、无 PII），`IISAAC_TELEMETRY_DISABLED=1` 可关闭
@@ -1187,8 +1187,9 @@ osc_1 波形是近正弦（不是旧的任意波形）：
 
 ### 9.7 波形预览
 
-- 右上角波形预览显示 osc_1 的分子波表（`getOsc1WaveData()` → `moleculeWave`），随分子编辑更新。
-- 线程安全：音频线程写 `moleculeWave`，UI 线程只读。
+- 右上角波形预览是**实时输出示波器**：音频线程在 `processBellBlock` 里经 `captureOutputWave()` 把输出写入 `outputWave` 环形缓冲（`kPreviewWaveSize`=512，左声道），UI 线程经 `getPreviewWave()` 读取最近 512 个采样绘制。
+- 线程安全：音频线程写 `outputWave` 环形缓冲（`outputWaveWritePos` 原子），UI 线程只读。
+- 逐帧刷新：编辑器 60 Hz `timerCallback()` 每帧对波形预览区域局部 `repaint()`，让波形跟随音频输出实时滚动；无音频输出时显示一条水平零线（正常）。
 
 ### 9.8 历史：旧 wavetable 方案（已旁路）
 
@@ -1241,6 +1242,7 @@ v1.0.0 之前，合成器是一套「21 化学描述符 → 70 合成参数」�
 
 | 版本 | 内容 |
 | --- | --- |
+| **1.2.1** | **右上角波形预览改为实时输出示波器。** 之前的静态分子 wavetable 预览已废弃：`getPreviewWave()` 改为读取 `outputWave` 环形缓冲（最近 512 样本），`processBellBlock` 经 `captureOutputWave()` 每块写入输出，编辑器 60 Hz `timerCallback()` 每帧对波形预览区域局部 `repaint()` 让波形跟随合成器输出实时滚动；顺带删除遗留的静态预览死代码。详见 §9.7。版本号 1.2.0 → 1.2.1。 |
 | **1.2.0** | **卤素效果重调 + 扇形轮盘。** ① 声音设计：F 梳状共振改为跟随音高（延迟 = 1/基频，随数量同时增强强度与增益）；Cl 环形调制调制频率改为 2×音高（2:1 谐波，边带落在基频与 3 次谐波），修复原固定 173 Hz 导致的跑调；Br 饱和追加随数量的响度补偿；I 由弥散回声换成三声部合唱。② 去除顶栏卤素计数展示。③ 轮盘由圆形四象限改为以卤素槽为中心向上展开的半圆扇形圆环（内 46 / 外 112 设计像素），从左到右 F/I/Br/Cl；中心固定到卤素槽位置（原为鼠标按下点）；扇形盘不透明、非扇形区域半透明遮罩调低（0.4）；修复 hover 块与相邻块共享半径边被后绘浅色边框覆盖导致的一条边不点亮（两遍绘制）。④ 新增 8 个含卤素预设（Fluorobenzene / Chlorobenzene / Bromobenzene / Iodobenzene / Chloroform / Carbon tetrachloride / Methylene chloride / Tetrafluoroethylene）与 8 个含卤素常用名识别（Fluoromethane / Chloromethane / Bromomethane / Iodomethane / Ethyl chloride / Vinyl chloride / Iodoform / Dichlorodifluoromethane），预设 33→41、命名 78→94。详见 §14。 |
 | **1.1.4** | 新增 X/Halogens 四选项轮盘、合法 C–X 取代、母体底色加 F/Cl/Br/I 四种定向效果与数量叠加；同步分子显示、状态恢复与英文提示。修复新路径涉及的锚点/补氢索引、结构式分支、波表发布和采样读取一致性，以及清空后的声部/尾音复活。Bell 回归正式接入构建，含化学、音频、交互和多缩放原生预览；详见 §14。插件身份不变，系列包保持 1.2.0。 |
 | **1.1.3** | **全界面鼠标悬停提示。** 新增 `juce::TooltipWindow`（白底细线 `TooltipLookAndFeel`，约 0.65 s 延迟），编辑器、`MoleculeCanvas`、`ElementBar` 均实现 `juce::TooltipClient::getTooltip()` 动态返回英文提示：顶栏（网址/预设簇/箭头/Clear-Reset）、画布（原子元素名 + 拖拽成键/生长提示、可升键级的键切换提示）、元素栏（页签用途、元素全名、ADSR 旋钮的化学隐喻对照）。提示清单见 §6.5。构建 `BUILD_OK`。**全系列改名**：显示名改为 `ChemE-Organic Chemistry`，Bundle ID `cn.iisaacbeats.ChemEOrganicChemistry`、Plugin Code `CE01`；新身份与旧插件（`OrCh`）UID 不同、VST3 包名不同，可共存；系列安装包使用独立 AppId，安装/卸载不会触碰旧版已安装插件 |

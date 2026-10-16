@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(OrganicChemistry VERSION 1.2.0 LANGUAGES C CXX)
+project(OrganicChemistry VERSION 1.2.1 LANGUAGES C CXX)
 
 # ===== macOS：双架构 Universal Binary（同时输出 Intel x86_64 与 Apple Silicon arm64）=====
 if(APPLE)

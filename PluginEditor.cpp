@@ -259,6 +259,9 @@ void OrganicChemistryAudioProcessorEditor::timerCallback()
     // 展开/收起动画进行中时，每帧重排布局让高度平滑过渡。
     if (elementBar.advanceAnimation (dt))
         resized();
+
+    // 右上角波形预览是实时输出示波器：每帧局部重绘，让波形跟随音频输出。
+    repaint (getWavePreviewBounds().toNearestInt());
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +341,7 @@ void OrganicChemistryAudioProcessorEditor::paint (juce::Graphics& g)
     // （底部栏顶部的横线已按要求移除，MOLECULE/REACTION tab 上方不再有分隔线。）
 }
 
-void OrganicChemistryAudioProcessorEditor::paintWavePreview (juce::Graphics& g) const
+juce::Rectangle<float> OrganicChemistryAudioProcessorEditor::getWavePreviewBounds() const
 {
     const float s = uiScale();
 
@@ -347,8 +350,19 @@ void OrganicChemistryAudioProcessorEditor::paintWavePreview (juce::Graphics& g) 
     const float h = 50.0f * s;
     const float margin = 12.0f * s;
 
-    const auto bounds = juce::Rectangle<float> (
+    return juce::Rectangle<float> (
         (float) getWidth() - w - margin, kTopBarHeight * s + margin, w, h);
+}
+
+void OrganicChemistryAudioProcessorEditor::paintWavePreview (juce::Graphics& g) const
+{
+    const float s = uiScale();
+
+    // 设计尺寸 180×50，随 uiScale 等比缩放；置于标题带右上角（顶栏下方）。
+    const float w = 180.0f * s;
+    const float h = 50.0f * s;
+
+    const auto bounds = getWavePreviewBounds();
 
     // 背景 + 细边框。
     g.setColour (juce::Colour (0xFFF7F7F3));

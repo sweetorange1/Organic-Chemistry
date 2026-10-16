@@ -95,6 +95,9 @@ private:
     /** 右上角波形预览窗口：置于标题带右上角（顶栏下方），保持加标题带前的视觉位置。 */
     void paintWavePreview (juce::Graphics& g) const;
 
+    /** 波形预览窗口的矩形区域（设计坐标 × uiScale）。供绘制与逐帧局部重绘共用。 */
+    juce::Rectangle<float> getWavePreviewBounds() const;
+
     /** 把当前分子重新映射到音频：波形始终跟随分子，效果参数仅在
         「自动」时被映射覆盖，「手动」参数保留用户设定值。 */
     void applyMoleculeToAudio();

@@ -90,8 +90,8 @@ cmake --build cmake-build-release --config Release
 
 本插件不再单独打包，随 **iisaacbeats Science Series** 系列安装包（同时包含 ChemE-Organic Chemistry / ChemE-Entropy / ChemE-Transcription 三款）统一分发。打包脚本位于工作区根目录：
 
-- Windows：`build_installer.bat` → `dist\iisaacbeats_ScienceSeries_Setup_<ver>_x64.exe`
-- macOS：`build_installer_mac.sh` → `dist\iisaacbeats_ScienceSeries_Setup_<ver>_macOS.pkg / .dmg`
+- Windows：`build_installer.bat` → `dist\ChemEPlugins_Setup_<ver>_x64.exe`
+- macOS：`build_installer_mac.sh` → `dist\ChemEPlugins_Setup_<ver>_macOS.pkg / .dmg`
 
 ---
 
